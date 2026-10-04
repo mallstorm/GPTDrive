@@ -95,7 +95,7 @@ public final class AccountManagerActivity extends Activity {
 
     private void select(AccountProfile a) {
         AccountSession.switchTo(this, a.id, () -> {
-            DocumentsContract.notifyRootsChanged(getContentResolver(), AUTHORITY);
+            notifyRoots();
             Toast.makeText(this, "Аккаунт переключён", Toast.LENGTH_SHORT).show();
             finish();
         });
@@ -123,13 +123,17 @@ public final class AccountManagerActivity extends Activity {
             } else if (mi.getItemId() == 2) {
                 if (a.active) Toast.makeText(this, "Сначала переключись на другой аккаунт", Toast.LENGTH_SHORT).show();
                 else if (db.deleteAccount(a.id)) {
-                    DocumentsContract.notifyRootsChanged(getContentResolver(), AUTHORITY);
+                    notifyRoots();
                     render();
                 }
             }
             return true;
         });
         m.show();
+    }
+
+    private void notifyRoots() {
+        try { getContentResolver().notifyChange(DocumentsContract.buildRootsUri(AUTHORITY), null); } catch (Exception ignored) {}
     }
 
     private TextView text(String s, int sp, boolean bold) {
