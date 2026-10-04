@@ -17,15 +17,17 @@ final class AccountSession {
         if (accountId <= 0) return;
         try {
             CookieManager cm = CookieManager.getInstance();
+            DriveDb db = new DriveDb(context.getApplicationContext());
+            AccountProfile existing = db.accountById(accountId);
+            if (existing != null && isBrowserSessionMarker(existing.cookieChatgpt)
+                    && BrowserSessionStore.has(context, accountId)) {
+                db.saveCookies(accountId, BROWSER_SESSION_MARKER, "", "");
+                cm.flush();
+                return;
+            }
             String chatgpt = cm.getCookie(CHATGPT);
             String auth = cm.getCookie(AUTH);
             String files = cm.getCookie(FILES);
-            DriveDb db = new DriveDb(context.getApplicationContext());
-            AccountProfile existing = db.accountById(accountId);
-            if (isEmpty(chatgpt) && existing != null && isBrowserSessionMarker(existing.cookieChatgpt)
-                    && BrowserSessionStore.has(context, accountId)) {
-                chatgpt = BROWSER_SESSION_MARKER;
-            }
             db.saveCookies(accountId, chatgpt, auth, files);
             cm.flush();
         } catch (Exception ignored) {}
