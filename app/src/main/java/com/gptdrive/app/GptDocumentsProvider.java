@@ -30,7 +30,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
             r.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, accountDocId(a.id));
             r.add(DocumentsContract.Root.COLUMN_TITLE, "GPT Drive · " + a.displayName());
             r.add(DocumentsContract.Root.COLUMN_SUMMARY, a.hasSession() ? db.countAll(a.id) + " элементов" : "Нужен вход в ChatGPT");
-            r.add(DocumentsContract.Root.COLUMN_FLAGS, DocumentsContract.Root.FLAG_SUPPORTS_SEARCH | DocumentsContract.Root.FLAG_LOCAL_ONLY);
+            r.add(DocumentsContract.Root.COLUMN_FLAGS, DocumentsContract.Root.FLAG_SUPPORTS_SEARCH);
             r.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*");
             r.add(DocumentsContract.Root.COLUMN_ICON, R.drawable.ic_drive);
         }
