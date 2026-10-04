@@ -50,7 +50,7 @@ public final class ImageViewerActivity extends Activity {
         root.addView(image, new LinearLayout.LayoutParams(-1, 0, 1));
 
         status = new TextView(this);
-        status.setText("Загрузка изображения…");
+        status.setText("Получаю актуальный файл из ChatGPT…");
         status.setTextColor(0xFFBBBBBB);
         status.setGravity(Gravity.CENTER);
         status.setPadding(dp(12), dp(6), dp(12), dp(6));
@@ -68,7 +68,7 @@ public final class ImageViewerActivity extends Activity {
         source.setOnClickListener(v -> {
             android.content.Intent i = new android.content.Intent(this, BrowserActivity.class);
             i.putExtra(BrowserActivity.EXTRA_SECTION, item.category);
-            i.putExtra(BrowserActivity.EXTRA_URL, item.url);
+            i.putExtra(BrowserActivity.EXTRA_URL, RemoteFileSource.stableUrl(item.url));
             i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID, item.accountId);
             startActivity(i);
         });
@@ -79,12 +79,12 @@ public final class ImageViewerActivity extends Activity {
     }
 
     private void load() {
-        ImageLoader.load(item.url, bitmap -> runOnUiThread(() -> {
+        ImageLoader.load(this, item.accountId, item.url, bitmap -> runOnUiThread(() -> {
             if (bitmap != null) {
                 image.setImageBitmap(bitmap);
                 status.setText(bitmap.getWidth() + " × " + bitmap.getHeight());
             } else {
-                status.setText("Не удалось загрузить. Возможно, ссылка ChatGPT истекла — синхронизируй этот аккаунт заново.");
+                status.setText("Не удалось получить файл через текущую сессию ChatGPT. Запусти синхронизацию аккаунта ещё раз.");
             }
         }));
     }
