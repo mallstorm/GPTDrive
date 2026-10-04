@@ -1,0 +1,1 @@
+-keepclassmembers class com.gptdrive.app.LibraryBridge { @android.webkit.JavascriptInterface <methods>; }
