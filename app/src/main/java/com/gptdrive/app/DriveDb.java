@@ -19,6 +19,7 @@ final class DriveDb extends SQLiteOpenHelper {
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 2) {
+            db.execSQL("DROP INDEX IF EXISTS idx_items_category");
             db.execSQL("ALTER TABLE items RENAME TO items_old");
             onCreate(db);
             db.execSQL("INSERT OR IGNORE INTO items(category,name,url,mime,updated) SELECT category,name,url,mime,updated FROM items_old");

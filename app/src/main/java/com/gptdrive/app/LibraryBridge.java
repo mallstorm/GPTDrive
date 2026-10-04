@@ -21,9 +21,13 @@ public final class LibraryBridge {
                 String name = o.optString("name", "");
                 String mime = o.optString("mime", "");
                 String kind = o.optString("kind", "");
-                if ("link".equals(kind) || "Projects".equals(category) || "Archived".equals(category)) {
+
+                if ("link".equals(kind) || acceptsLink(url)) {
                     if (acceptsLink(url)) db.upsert(category, name, url, DriveActions.LINK_MIME);
-                } else if (acceptsAsset(url, mime)) {
+                    continue;
+                }
+
+                if (acceptsAsset(url, mime)) {
                     if ("Images".equals(category) && (mime == null || mime.isEmpty() || "image/*".equals(mime))) mime = "image/*";
                     db.upsert(category, name, url, mime == null || mime.isEmpty() ? null : mime);
                 }
@@ -32,10 +36,8 @@ public final class LibraryBridge {
     }
 
     void captureResource(String url) {
-        if (url == null) return;
-        if (("Library".equals(category) || "Images".equals(category)) && acceptsAsset(url, "")) {
-            db.upsert(category, "", url, "Images".equals(category) ? "image/*" : null);
-        }
+        if (url == null || !acceptsAsset(url, "")) return;
+        db.upsert(category, "", url, "Images".equals(category) ? "image/*" : null);
     }
 
     private boolean acceptsLink(String url) {
