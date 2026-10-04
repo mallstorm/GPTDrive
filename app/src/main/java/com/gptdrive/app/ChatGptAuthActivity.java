@@ -66,7 +66,7 @@ public final class ChatGptAuthActivity extends Activity {
         s.setJavaScriptCanOpenWindowsAutomatically(true);
         s.setSupportMultipleWindows(false);
         s.setMediaPlaybackRequiresUserGesture(true);
-        s.setUserAgentString("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.4.9");
+        s.setUserAgentString("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.0");
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
@@ -136,12 +136,16 @@ public final class ChatGptAuthActivity extends Activity {
         }
 
         AccountSession.snapshot(this, finalId);
+        ChatGptSessionStore.save(this, finalId, sessionJson);
         LibraryBridge bridge = new LibraryBridge(db, finalId);
         bridge.captureAccount(sessionJson);
         if (!name.isEmpty() || !email.isEmpty()) db.updateAccountIdentity(finalId, name, email);
         db.setActiveAccount(finalId);
 
-        if (newAccount && finalId != targetId) db.deleteAccount(targetId);
+        if (newAccount && finalId != targetId) {
+            ChatGptSessionStore.clear(this, targetId);
+            db.deleteAccount(targetId);
+        }
         cleanupEmptyPlaceholders(finalId);
         notifyRoots();
 
@@ -157,14 +161,20 @@ public final class ChatGptAuthActivity extends Activity {
             if (a.id == keepId || a.active) continue;
             boolean noIdentity = a.email == null || a.email.trim().isEmpty();
             boolean defaultName = "Аккаунт 1".equals(a.label) || "Новый аккаунт".equals(a.label);
-            if (noIdentity && db.countAll(a.id) == 0 && defaultName) db.deleteAccount(a.id);
+            if (noIdentity && db.countAll(a.id) == 0 && defaultName) {
+                ChatGptSessionStore.clear(this, a.id);
+                db.deleteAccount(a.id);
+            }
         }
     }
 
     private void cancelAuthorization() {
         if (closing) return;
         closing = true;
-        if (newAccount) db.deleteAccount(targetId);
+        if (newAccount) {
+            ChatGptSessionStore.clear(this, targetId);
+            db.deleteAccount(targetId);
+        }
         restorePreviousCookies();
     }
 
