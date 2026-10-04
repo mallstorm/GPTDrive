@@ -50,11 +50,7 @@ final class AccountSession {
         CookieManager cm = CookieManager.getInstance();
         if (isBrowserSession(target, context)) {
             if (current != accountId && current > 0) snapshot(context, current);
-            cm.removeAllCookies(ok -> {
-                db.setActiveAccount(accountId);
-                cm.flush();
-                runMain(ready);
-            });
+            restoreSaved(context, accountId, ready);
             return;
         }
 
@@ -65,8 +61,16 @@ final class AccountSession {
         }
 
         if (current != accountId && current > 0) snapshot(context, current);
+        restoreSaved(context, accountId, ready);
+    }
+
+    static void restoreSaved(Context context, long accountId, Runnable ready) {
+        DriveDb db = new DriveDb(context.getApplicationContext());
+        AccountProfile target = db.accountById(accountId);
+        if (target == null) { runMain(ready); return; }
+        CookieManager cm = CookieManager.getInstance();
         cm.removeAllCookies(ok -> {
-            restore(target);
+            if (!isBrowserSession(target, context)) restore(target);
             db.setActiveAccount(accountId);
             cm.flush();
             runMain(ready);
