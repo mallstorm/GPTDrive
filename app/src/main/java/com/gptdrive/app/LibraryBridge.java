@@ -6,9 +6,10 @@ import org.json.JSONObject;
 
 public final class LibraryBridge {
     private final DriveDb db;
+    private final long accountId;
     private volatile String category = "Library";
 
-    LibraryBridge(DriveDb db) { this.db = db; }
+    LibraryBridge(DriveDb db, long accountId) { this.db = db; this.accountId = accountId; }
     void setCategory(String c) { category = c == null ? "Library" : c; }
 
     @JavascriptInterface public void capture(String json) {
@@ -21,23 +22,31 @@ public final class LibraryBridge {
                 String name = o.optString("name", "");
                 String mime = o.optString("mime", "");
                 String kind = o.optString("kind", "");
-
                 if ("link".equals(kind) || acceptsLink(url)) {
-                    if (acceptsLink(url)) db.upsert(category, name, url, DriveActions.LINK_MIME);
+                    if (acceptsLink(url)) db.upsert(accountId, category, name, url, DriveActions.LINK_MIME);
                     continue;
                 }
-
                 if (acceptsAsset(url, mime)) {
                     if ("Images".equals(category) && (mime == null || mime.isEmpty() || "image/*".equals(mime))) mime = "image/*";
-                    db.upsert(category, name, url, mime == null || mime.isEmpty() ? null : mime);
+                    db.upsert(accountId, category, name, url, mime == null || mime.isEmpty() ? null : mime);
                 }
             }
         } catch (Exception ignored) {}
     }
 
+    @JavascriptInterface public void captureAccount(String json) {
+        try {
+            JSONObject root = new JSONObject(json);
+            JSONObject user = root.optJSONObject("user");
+            String name = user != null ? user.optString("name", "") : root.optString("name", "");
+            String email = user != null ? user.optString("email", "") : root.optString("email", "");
+            if (!name.isEmpty() || !email.isEmpty()) db.updateAccountIdentity(accountId, name, email);
+        } catch (Exception ignored) {}
+    }
+
     void captureResource(String url) {
         if (url == null || !acceptsAsset(url, "")) return;
-        db.upsert(category, "", url, "Images".equals(category) ? "image/*" : null);
+        db.upsert(accountId, category, "", url, "Images".equals(category) ? "image/*" : null);
     }
 
     private boolean acceptsLink(String url) {
@@ -57,12 +66,6 @@ public final class LibraryBridge {
         return hasExtension(s, ".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".pdf", ".docx", ".xlsx", ".pptx", ".zip", ".txt", ".md", ".json");
     }
 
-    private boolean isUiAsset(String s) {
-        return s.contains("favicon") || s.contains("avatar") || s.contains("/assets/") || s.contains("static") || s.contains("logo");
-    }
-
-    private boolean hasExtension(String s, String... exts) {
-        for (String e : exts) if (s.contains(e)) return true;
-        return false;
-    }
+    private boolean isUiAsset(String s) { return s.contains("favicon") || s.contains("avatar") || s.contains("/assets/") || s.contains("static") || s.contains("logo"); }
+    private boolean hasExtension(String s, String... exts) { for (String e : exts) if (s.contains(e)) return true; return false; }
 }
