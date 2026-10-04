@@ -4,16 +4,20 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 import java.text.DateFormat;
 import java.util.List;
 
 public final class MainActivity extends Activity {
+    private static final String AUTHORITY = "com.gptdrive.app.documents";
     private DriveDb db;
     private LinearLayout recent, categories;
     private TextView session;
@@ -29,7 +33,10 @@ public final class MainActivity extends Activity {
         root.addView(text("GPT Drive",29,true));
         TextView sub=text("ChatGPT Library как облачный диск",14,false); sub.setTextColor(0xFF666666); sub.setPadding(0,dp(3),0,dp(10)); root.addView(sub);
 
-        accountButton = new Button(this); accountButton.setAllCaps(false); accountButton.setOnClickListener(v -> startActivity(new Intent(this, AccountManagerActivity.class))); root.addView(accountButton,new LinearLayout.LayoutParams(-1,dp(52)));
+        accountButton = new Button(this);
+        accountButton.setAllCaps(false);
+        accountButton.setOnClickListener(this::showAccountSwitcher);
+        root.addView(accountButton,new LinearLayout.LayoutParams(-1,dp(52)));
         session=text("",12,false); session.setPadding(0,dp(5),0,dp(10)); root.addView(session);
 
         Button sync=new Button(this); sync.setText("Синхронизировать Library"); sync.setAllCaps(false); sync.setOnClickListener(v->openSync("Library")); root.addView(sync,new LinearLayout.LayoutParams(-1,dp(52)));
@@ -47,13 +54,54 @@ public final class MainActivity extends Activity {
         if (db==null || categories==null) return;
         AccountProfile a=db.activeAccount(); if (a==null) return; activeId=a.id;
         accountButton.setText(a.displayName()+"  ▾");
-        session.setText(a.hasSession()?"● Аккаунт подключён":"○ Нужен вход в ChatGPT"); session.setTextColor(a.hasSession()?0xFF287A42:0xFF777777);
+        session.setText(a.hasSession()?"● Активный аккаунт подключён":"○ Нужен вход в ChatGPT");
+        session.setTextColor(a.hasSession()?0xFF287A42:0xFF777777);
         categories.removeAllViews();
         categories.addView(card("▣","Library","Документы и загруженные файлы",db.count(activeId,"Library")));
         categories.addView(card("◫","Images","Сгенерированные и отправленные изображения",db.count(activeId,"Images")));
         categories.addView(card("⌂","Projects","Проекты и их содержимое",db.count(activeId,"Projects")));
         categories.addView(card("□","Archived","Архивированные чаты и вложения",db.count(activeId,"Archived")));
         fillRecent();
+    }
+
+    private void showAccountSwitcher(View anchor) {
+        List<AccountProfile> accounts = db.listAccounts();
+        PopupMenu menu = new PopupMenu(this, anchor);
+        int id = 100;
+        for (AccountProfile a : accounts) {
+            String label = (a.active ? "✓  " : "") + a.displayName();
+            menu.getMenu().add(0, id++, 0, label);
+        }
+        menu.getMenu().add(0, 9000, 1, "＋ Добавить аккаунт");
+        menu.getMenu().add(0, 9001, 2, "Управление аккаунтами");
+        menu.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == 9000) {
+                long newId = db.addAccount("Новый аккаунт");
+                Intent i = new Intent(this, BrowserActivity.class);
+                i.putExtra(BrowserActivity.EXTRA_SECTION, "Library");
+                i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID, newId);
+                i.putExtra(BrowserActivity.EXTRA_NEW_LOGIN, true);
+                startActivity(i);
+                return true;
+            }
+            if (item.getItemId() == 9001) {
+                startActivity(new Intent(this, AccountManagerActivity.class));
+                return true;
+            }
+            int index = item.getItemId() - 100;
+            if (index >= 0 && index < accounts.size()) {
+                AccountProfile target = accounts.get(index);
+                if (target.id == activeId) return true;
+                AccountSession.switchTo(this, target.id, () -> {
+                    notifyRoots();
+                    refresh();
+                    Toast.makeText(this, "Переключено: " + target.displayName(), Toast.LENGTH_SHORT).show();
+                });
+                return true;
+            }
+            return false;
+        });
+        menu.show();
     }
 
     private View card(String icon,String title,String desc,long count) {
@@ -75,6 +123,7 @@ public final class MainActivity extends Activity {
     private void openCategory(String category){Intent i=new Intent(this,NativeBrowserActivity.class);i.putExtra(NativeBrowserActivity.EXTRA_CATEGORY,category);i.putExtra(NativeBrowserActivity.EXTRA_ACCOUNT_ID,activeId);startActivity(i);}
     private void openSync(String section){Intent i=new Intent(this,BrowserActivity.class);i.putExtra(BrowserActivity.EXTRA_SECTION,section);i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID,activeId);startActivity(i);}
     private void openSystemFiles(){try{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,100);}catch(Exception ignored){}}
+    private void notifyRoots(){try{getContentResolver().notifyChange(DocumentsContract.buildRootsUri(AUTHORITY),null);}catch(Exception ignored){}}
     private TextView text(String s,int sp,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(sp);t.setTextColor(0xFF111111);if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);return t;}
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
 }
