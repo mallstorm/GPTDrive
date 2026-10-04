@@ -15,7 +15,8 @@
         <activity android:name=".BrowserActivity" android:exported="false"/>
         <activity android:name=".MainActivity" android:exported="false"/>
         <activity android:name=".ExplorerActivity" android:exported="false"/>
-        <activity android:name=".ExplorerActivityV2" android:exported="true">
+        <activity android:name=".ExplorerActivityV2" android:exported="false"/>
+        <activity android:name=".ExplorerActivityCompact" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
