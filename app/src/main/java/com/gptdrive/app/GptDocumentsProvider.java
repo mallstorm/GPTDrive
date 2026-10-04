@@ -32,7 +32,12 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         r.add(DocumentsContract.Root.COLUMN_ROOT_ID, ROOT);
         r.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, accountDocId(a.id));
         r.add(DocumentsContract.Root.COLUMN_TITLE, "GPT Drive");
-        String summary = a.displayName() + (a.hasSession() ? "  •  " + db.countAll(a.id) + " элементов" : "  •  Нужен вход");
+        long known = db.knownStorageBytes(a.id);
+        String size = a.hasRemoteQuota()
+                ? MainActivity.formatBytes(a.remoteUsedBytes) + " / " + MainActivity.formatBytes(a.remoteQuotaBytes)
+                : (known > 0 ? MainActivity.formatBytes(known) + " индексировано" : "объём —");
+        String summary = a.displayName() + "  •  " + a.planLabel() + "  •  " + size;
+        if (!a.hasSession()) summary += "  •  Нужен вход";
         r.add(DocumentsContract.Root.COLUMN_SUMMARY, summary);
         r.add(DocumentsContract.Root.COLUMN_FLAGS, DocumentsContract.Root.FLAG_SUPPORTS_SEARCH);
         r.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*");
@@ -114,7 +119,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
             h.setReadTimeout(30000);
             String cookie = AccountSession.cookieHeader(getContext(), item.accountId, item.url);
             if (cookie != null) h.setRequestProperty("Cookie", cookie);
-            h.setRequestProperty("User-Agent", "Mozilla/5.0 Android GPTDrive/0.3.1");
+            h.setRequestProperty("User-Agent", "Mozilla/5.0 Android GPTDrive/0.4");
             try (java.io.InputStream in = h.getInputStream()) {
                 byte[] b = new byte[32768];
                 int n;
@@ -160,6 +165,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         int flags = DriveActions.isImage(x) ? DocumentsContract.Document.FLAG_SUPPORTS_THUMBNAIL : 0;
         r.add(DocumentsContract.Document.COLUMN_FLAGS, flags);
         r.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, x.updated);
+        if (x.sizeBytes > 0) r.add(DocumentsContract.Document.COLUMN_SIZE, x.sizeBytes);
     }
 
     private static String accountDocId(long accountId) { return "acct:" + accountId; }
