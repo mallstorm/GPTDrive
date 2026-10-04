@@ -39,10 +39,15 @@ public final class LibraryBridge {
                     if (acceptsLink(url, category)) db.upsert(accountId, category, name, url, DriveActions.LINK_MIME, 0);
                     continue;
                 }
+
+                String originalUrl = url;
+                String stableUrl = RemoteFileSource.stableUrl(url);
+                if (RemoteFileSource.isTransientSignedUrl(url) && stableUrl.equals(url)) continue;
+                url = stableUrl;
                 if (!acceptsAsset(url, mime)) continue;
-                String target = classifyCategory(category, url, mime);
+                String target = classifyCategory(category, originalUrl, mime);
                 if (isNoiseName(name)) continue;
-                db.upsert(accountId, target, name, url, normalizeMime(mime, url), sizeBytes);
+                db.upsert(accountId, target, name, url, normalizeMime(mime, originalUrl), sizeBytes);
             }
         } catch (Exception ignored) {}
     }
@@ -81,9 +86,13 @@ public final class LibraryBridge {
     }
 
     void captureResource(String url) {
-        if (url == null || !acceptsAsset(url, "")) return;
-        String target = classifyCategory(category, url, "");
-        db.upsert(accountId, target, "", url, normalizeMime("", url), 0);
+        if (url == null) return;
+        String originalUrl = url;
+        String stableUrl = RemoteFileSource.stableUrl(url);
+        if (RemoteFileSource.isTransientSignedUrl(url) && stableUrl.equals(url)) return;
+        if (!acceptsAsset(stableUrl, "")) return;
+        String target = classifyCategory(category, originalUrl, "");
+        db.upsert(accountId, target, "", stableUrl, normalizeMime("", originalUrl), 0);
     }
 
     private void walkStructured(Object node, String endpoint, int depth) {
@@ -131,14 +140,21 @@ public final class LibraryBridge {
         boolean fileShape = (!mime.isEmpty() || size > 0) && (!name.isEmpty() || fileId) && isFileEndpoint(e);
         if (!fileId && !strictUrl && !fileShape) return;
         if (isNoiseName(name)) return;
+        if (fileId && name.trim().isEmpty()) return;
 
-        if ((url == null || url.trim().isEmpty()) && fileId) {
+        String originalUrl = url;
+        String normalizedMime = normalizeMime(mime, originalUrl);
+        if (fileId) {
             url = "https://chatgpt.com/backend-api/files/" + id + "/content";
+        } else {
+            String stable = RemoteFileSource.stableUrl(url);
+            if (RemoteFileSource.isTransientSignedUrl(url) && stable.equals(url)) return;
+            url = stable;
         }
-        if (!acceptsAsset(url, mime)) return;
+        if (!acceptsAsset(url, normalizedMime)) return;
 
-        String target = classifyCategory(categoryForEndpoint(e), url, mime);
-        db.upsert(accountId, target, name, url, normalizeMime(mime, url), size);
+        String target = classifyCategory(categoryForEndpoint(e), originalUrl, normalizedMime);
+        db.upsert(accountId, target, name, url, normalizedMime, size);
     }
 
     private void captureUsage(Object root) {
