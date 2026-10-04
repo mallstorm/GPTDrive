@@ -1,8 +1,10 @@
 package com.gptdrive.app;
 
+import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.nio.charset.StandardCharsets;
 
 public final class LibraryBridge {
     private final DriveDb db;
@@ -64,6 +66,9 @@ public final class LibraryBridge {
     private String detectPlan(JSONObject root, JSONObject user) {
         JSONObject account = root.optJSONObject("account");
         JSONObject subscription = root.optJSONObject("subscription");
+        JSONObject jwt = decodeJwtPayload(root.optString("accessToken", ""));
+        JSONObject jwtAuth = jwt == null ? null : jwt.optJSONObject("https://api.openai.com/auth");
+
         String value = firstNonEmpty(
                 root.optString("plan_type", ""),
                 root.optString("plan", ""),
@@ -74,8 +79,25 @@ public final class LibraryBridge {
                 account == null ? "" : account.optString("plan", ""),
                 subscription == null ? "" : subscription.optString("plan_type", ""),
                 subscription == null ? "" : subscription.optString("plan", ""),
-                subscription == null ? "" : subscription.optString("name", ""));
+                subscription == null ? "" : subscription.optString("name", ""),
+                jwtAuth == null ? "" : jwtAuth.optString("chatgpt_plan_type", ""),
+                jwtAuth == null ? "" : jwtAuth.optString("plan_type", ""),
+                jwt == null ? "" : jwt.optString("chatgpt_plan_type", ""),
+                jwt == null ? "" : jwt.optString("plan_type", ""));
         return normalizePlan(value);
+    }
+
+    private static JSONObject decodeJwtPayload(String token) {
+        if (token == null || token.trim().isEmpty()) return null;
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length < 2) return null;
+            String p = parts[1];
+            int mod = p.length() % 4;
+            if (mod != 0) p += "====".substring(mod);
+            byte[] bytes = Base64.decode(p, Base64.URL_SAFE | Base64.NO_WRAP);
+            return new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+        } catch (Exception e) { return null; }
     }
 
     private long detectStorage(JSONObject root, boolean used) {
