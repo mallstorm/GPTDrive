@@ -14,6 +14,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 public final class GptDocumentsProvider extends DocumentsProvider {
+    private static final String ROOT = "gptdrive";
     private static final String[] CATS = {"Library", "Images", "Projects", "Archived"};
     private DriveDb db;
 
@@ -24,16 +25,18 @@ public final class GptDocumentsProvider extends DocumentsProvider {
 
     @Override public Cursor queryRoots(String[] projection) {
         MatrixCursor c = new MatrixCursor(resolveRootProjection(projection));
-        for (AccountProfile a : db.listAccounts()) {
-            MatrixCursor.RowBuilder r = c.newRow();
-            r.add(DocumentsContract.Root.COLUMN_ROOT_ID, rootId(a.id));
-            r.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, accountDocId(a.id));
-            r.add(DocumentsContract.Root.COLUMN_TITLE, "GPT Drive · " + a.displayName());
-            r.add(DocumentsContract.Root.COLUMN_SUMMARY, a.hasSession() ? db.countAll(a.id) + " элементов" : "Нужен вход в ChatGPT");
-            r.add(DocumentsContract.Root.COLUMN_FLAGS, DocumentsContract.Root.FLAG_SUPPORTS_SEARCH);
-            r.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*");
-            r.add(DocumentsContract.Root.COLUMN_ICON, R.drawable.ic_drive);
-        }
+        AccountProfile a = db.activeAccount();
+        if (a == null) return c;
+
+        MatrixCursor.RowBuilder r = c.newRow();
+        r.add(DocumentsContract.Root.COLUMN_ROOT_ID, ROOT);
+        r.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, accountDocId(a.id));
+        r.add(DocumentsContract.Root.COLUMN_TITLE, "GPT Drive");
+        String summary = a.displayName() + (a.hasSession() ? "  •  " + db.countAll(a.id) + " элементов" : "  •  Нужен вход");
+        r.add(DocumentsContract.Root.COLUMN_SUMMARY, summary);
+        r.add(DocumentsContract.Root.COLUMN_FLAGS, DocumentsContract.Root.FLAG_SUPPORTS_SEARCH);
+        r.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*");
+        r.add(DocumentsContract.Root.COLUMN_ICON, R.drawable.ic_drive);
         return c;
     }
 
@@ -60,7 +63,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
 
     @Override public Cursor querySearchDocuments(String rootId, String query, String[] projection) {
         MatrixCursor c = new MatrixCursor(resolveDocProjection(projection));
-        long accountId = parseRootId(rootId);
+        long accountId = db.activeAccountId();
         String q = query == null ? "" : query.toLowerCase();
         if (accountId <= 0) return c;
         for (String cat : CATS) {
@@ -111,7 +114,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
             h.setReadTimeout(30000);
             String cookie = AccountSession.cookieHeader(getContext(), item.accountId, item.url);
             if (cookie != null) h.setRequestProperty("Cookie", cookie);
-            h.setRequestProperty("User-Agent", "Mozilla/5.0 Android GPTDrive/0.3");
+            h.setRequestProperty("User-Agent", "Mozilla/5.0 Android GPTDrive/0.3.1");
             try (java.io.InputStream in = h.getInputStream()) {
                 byte[] b = new byte[32768];
                 int n;
@@ -129,7 +132,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
             long accountId = parseLongAfter(id, "acct:");
             AccountProfile a = db.accountById(accountId);
             if (a == null) throw new FileNotFoundException(id);
-            addDir(c, id, "GPT Drive · " + a.displayName());
+            addDir(c, id, "GPT Drive");
             return;
         }
         if (id.startsWith("dir:")) {
@@ -159,13 +162,8 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         r.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, x.updated);
     }
 
-    private static String rootId(long accountId) { return "root:" + accountId; }
     private static String accountDocId(long accountId) { return "acct:" + accountId; }
     private static String dirId(long accountId, String category) { return "dir:" + accountId + ":" + category; }
-
-    private static long parseRootId(String rootId) {
-        try { return parseLongAfter(rootId, "root:"); } catch (Exception e) { return -1; }
-    }
 
     private static long parseLongAfter(String value, String prefix) throws FileNotFoundException {
         if (value == null || !value.startsWith(prefix)) throw new FileNotFoundException(value);
