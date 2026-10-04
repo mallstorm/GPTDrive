@@ -50,7 +50,7 @@ public final class AccountManagerActivity extends Activity {
         ap.setMargins(dp(16), 0, dp(16), dp(12));
         root.addView(add, ap);
 
-        TextView hint = text("Каждый аккаунт публикуется в Android как отдельный корень GPT Drive.", 13, false);
+        TextView hint = text("Аккаунтов может быть несколько, но активен всегда один. Переключение восстанавливает его сохранённую сессию и содержимое GPT Drive.", 13, false);
         hint.setTextColor(0xFF6E6E6E); hint.setPadding(dp(18),0,dp(18),dp(10)); root.addView(hint);
 
         ScrollView sc = new ScrollView(this);
@@ -79,7 +79,9 @@ public final class AccountManagerActivity extends Activity {
 
         LinearLayout info = new LinearLayout(this); info.setOrientation(LinearLayout.VERTICAL); info.setGravity(Gravity.CENTER_VERTICAL);
         TextView name = text(a.displayName(), 16, true);
-        String state = a.hasSession() ? "Подключён" : "Нужен вход";
+        String state;
+        if (a.active) state = a.hasSession() ? "Активен" : "Активен • нужен вход";
+        else state = a.hasSession() ? "Сессия сохранена" : "Нужен вход";
         TextView meta = text(state + "  •  " + db.countAll(a.id) + " элементов", 12, false); meta.setTextColor(0xFF777777);
         info.addView(name); info.addView(meta);
         row.addView(info, new LinearLayout.LayoutParams(0, dp(58), 1));
@@ -96,7 +98,7 @@ public final class AccountManagerActivity extends Activity {
     private void select(AccountProfile a) {
         AccountSession.switchTo(this, a.id, () -> {
             notifyRoots();
-            Toast.makeText(this, "Аккаунт переключён", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Переключено: " + a.displayName(), Toast.LENGTH_SHORT).show();
             finish();
         });
     }
@@ -112,7 +114,7 @@ public final class AccountManagerActivity extends Activity {
 
     private void menu(View anchor, AccountProfile a) {
         PopupMenu m = new PopupMenu(this, anchor);
-        m.getMenu().add(0,1,0,"Синхронизировать");
+        m.getMenu().add(0,1,0,"Открыть и синхронизировать");
         m.getMenu().add(0,2,1,"Удалить аккаунт");
         m.setOnMenuItemClickListener(mi -> {
             if (mi.getItemId() == 1) {
