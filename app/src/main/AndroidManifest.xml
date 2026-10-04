@@ -9,6 +9,8 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
 
+        <activity android:name=".ImageViewerActivity" android:exported="false"/>
+        <activity android:name=".NativeBrowserActivity" android:exported="false"/>
         <activity android:name=".BrowserActivity" android:exported="false"/>
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
