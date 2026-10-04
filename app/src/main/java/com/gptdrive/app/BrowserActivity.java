@@ -127,8 +127,12 @@ public final class BrowserActivity extends Activity {
 
     private void finishDone() {
         AccountSession.snapshot(this, accountId);
-        DocumentsContract.notifyRootsChanged(getContentResolver(), AUTHORITY);
+        notifyRoots();
         finish();
+    }
+
+    private void notifyRoots() {
+        try { getContentResolver().notifyChange(DocumentsContract.buildRootsUri(AUTHORITY), null); } catch (Exception ignored) {}
     }
 
     @Override protected void onPause() { AccountSession.snapshot(this, accountId); super.onPause(); }
