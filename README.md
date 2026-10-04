@@ -1,25 +1,37 @@
-# GPT Drive (Android)
+# GPT Drive for Android
 
-Lightweight native Android shell that exposes a user's ChatGPT Library as a cloud-drive-like experience.
+GPT Drive is a very small native Android client that presents the user's ChatGPT Library as a cloud-drive-like file manager.
 
-## v0.1.0
-- Native Java/XML-free UI (platform widgets only; no Compose, no AndroidX dependencies)
-- ChatGPT sign-in via Android System WebView and persistent cookies
-- Library and Images entry points
-- Projects / Archived entry points using ChatGPT UI discovery
-- DOM bridge that indexes visible ChatGPT file/image links into local SQLite metadata
-- Android `DocumentsProvider` root named **GPT Drive**
-- Remote file streaming with authenticated WebView cookies when a discovered URL is directly downloadable
-- Android DownloadManager integration
+## v0.2.0
+- Native home screen and native category browser
+- Library / Images / Projects / Archived sections
+- Image gallery with authenticated thumbnails
+- Full-screen native image viewer
+- Search inside indexed categories
+- Open and download indexed files
+- WebView is now used only for ChatGPT sign-in and synchronization
+- Improved DOM + WebView resource indexing
+- Project/archive ChatGPT links can be indexed separately from downloadable files
+- SQLite v2 keeps the same resource in more than one category
+- Android DocumentsProvider exposes GPT Drive in the system file picker
+- Image thumbnails are exposed to Android DocumentsProvider
+- No AndroidX, Compose, Glide, Picasso or other third-party runtime libraries
 
-## Important
-ChatGPT currently exposes the full Library primarily through its web UI. GPT Drive therefore uses the user's authenticated web session and a DOM indexing adapter rather than pretending there is a stable public Library API. The adapter is isolated so it can later be replaced by an official API if OpenAI publishes one.
+## How it works
+1. Open GPT Drive.
+2. Tap **Синхронизировать Library** and sign in to ChatGPT if needed.
+3. Let the ChatGPT Library/Images page load, then tap **Готово**.
+4. Browse the indexed content in GPT Drive's native UI.
+5. GPT Drive also appears as a document source in Android's system file picker.
+
+## Architecture
+The app deliberately isolates the ChatGPT web-session adapter. ChatGPT does not expose a stable public API for the entire consumer Library/Projects surface, so v0.2 indexes content visible to the authenticated web session and stores only metadata locally. Remote content is streamed or downloaded on demand using the user's own WebView cookies.
 
 ## Build
-Requires JDK 17+, Android SDK 35 and Gradle 8.9.
+Requires JDK 17, Android SDK 35 and Gradle 8.9.
 
 ```bash
 gradle :app:assembleDebug
 ```
 
-The GitHub Actions workflow builds an APK artifact automatically.
+GitHub Actions builds an APK artifact on every push to `main`.
