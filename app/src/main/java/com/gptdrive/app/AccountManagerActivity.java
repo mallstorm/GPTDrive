@@ -103,8 +103,9 @@ public final class AccountManagerActivity extends Activity {
     private List<AccountProfile> registeredAccounts() {
         ArrayList<AccountProfile> out = new ArrayList<>();
         for (AccountProfile a : db.listAccounts()) {
-            boolean hasIdentity = a.email != null && !a.email.trim().isEmpty();
-            if (a.hasSession() || hasIdentity) out.add(a);
+            // Only a confirmed ChatGPT identity counts as a registered account.
+            // Anonymous cookies from the login page must never create a card.
+            if (a.email != null && !a.email.trim().isEmpty()) out.add(a);
         }
         return out;
     }
