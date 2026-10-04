@@ -3,76 +3,138 @@ package com.gptdrive.app;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
 
+/**
+ * Friendly raster section icons used by the bottom navigation.
+ * They intentionally look like small app illustrations rather than technical glyphs.
+ */
 final class RasterNavIcons {
     static final int FILES = 0;
     static final int IMAGES = 1;
     static final int PROJECTS = 2;
     static final int ACCOUNTS = 3;
 
+    private static final int OUTLINE = 0xFF344054;
+    private static final int WHITE = 0xFFF8FAFC;
+
     private RasterNavIcons() {}
 
-    static Bitmap make(Context c, int type, int color, int sizeDp) {
-        int s = Math.max(32, Math.round(sizeDp * c.getResources().getDisplayMetrics().density));
+    static Bitmap make(Context c, int type, int accent, int sizeDp) {
+        int s = Math.max(40, Math.round(sizeDp * c.getResources().getDisplayMetrics().density));
         Bitmap b = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(b);
         float k = s / 64f;
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
-        p.setStrokeCap(Paint.Cap.ROUND);
-        p.setStrokeJoin(Paint.Join.ROUND);
-        p.setStrokeWidth(4.6f * k);
-        p.setColor(color);
-        p.setStyle(Paint.Style.STROKE);
 
-        if (type == FILES) drawFiles(canvas, p, k);
-        else if (type == IMAGES) drawImages(canvas, p, k);
-        else if (type == PROJECTS) drawProjects(canvas, p, k);
-        else drawAccounts(canvas, p, k);
+        Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
+        stroke.setStyle(Paint.Style.STROKE);
+        stroke.setStrokeWidth(4.1f * k);
+        stroke.setStrokeCap(Paint.Cap.ROUND);
+        stroke.setStrokeJoin(Paint.Join.ROUND);
+        stroke.setColor(OUTLINE);
+
+        Paint white = new Paint(stroke);
+        white.setStyle(Paint.Style.FILL);
+        white.setColor(WHITE);
+
+        Paint fill = new Paint(stroke);
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(withAlpha(accent, 78));
+
+        Paint accentSolid = new Paint(stroke);
+        accentSolid.setStyle(Paint.Style.FILL);
+        accentSolid.setColor(accent);
+
+        if (type == FILES) drawFiles(canvas, stroke, white, fill, accentSolid, k);
+        else if (type == IMAGES) drawImages(canvas, stroke, white, fill, accentSolid, k);
+        else if (type == PROJECTS) drawProjects(canvas, stroke, white, fill, accentSolid, k);
+        else drawAccounts(canvas, stroke, white, fill, accentSolid, k);
         return b;
     }
 
-    private static void drawFiles(Canvas c, Paint p, float k) {
-        Paint fill = new Paint(p);
-        fill.setStyle(Paint.Style.FILL);
-        fill.setAlpha(32);
-        Path body = new Path();
-        body.moveTo(9*k, 22*k); body.lineTo(26*k, 22*k); body.lineTo(31*k, 27*k); body.lineTo(55*k, 27*k);
-        body.lineTo(55*k, 49*k); body.quadTo(55*k, 53*k, 51*k, 53*k); body.lineTo(13*k, 53*k); body.quadTo(9*k, 53*k, 9*k, 49*k); body.close();
-        c.drawPath(body, fill);
-        c.drawPath(body, p);
+    private static void drawFiles(Canvas c, Paint stroke, Paint white, Paint fill, Paint accent, float k) {
         Path back = new Path();
-        back.moveTo(13*k, 22*k); back.lineTo(13*k, 14*k); back.lineTo(29*k, 14*k); back.lineTo(34*k, 19*k); back.lineTo(51*k, 19*k);
-        c.drawPath(back, p);
+        back.moveTo(9*k, 18*k);
+        back.quadTo(9*k, 13*k, 14*k, 13*k);
+        back.lineTo(27*k, 13*k);
+        back.lineTo(33*k, 19*k);
+        back.lineTo(51*k, 19*k);
+        back.quadTo(55*k, 19*k, 55*k, 23*k);
+        back.lineTo(48*k, 46*k);
+        back.lineTo(12*k, 46*k);
+        back.close();
+        c.drawPath(back, fill);
+        c.drawPath(back, stroke);
+
+        RectF front = new RectF(8*k, 25*k, 56*k, 53*k);
+        c.drawRoundRect(front, 6*k, 6*k, white);
+        c.drawRoundRect(front, 6*k, 6*k, stroke);
+        RectF stripe = new RectF(13*k, 28*k, 51*k, 32*k);
+        c.drawRoundRect(stripe, 2*k, 2*k, accent);
     }
 
-    private static void drawImages(Canvas c, Paint p, float k) {
-        RectF r = new RectF(10*k, 10*k, 54*k, 54*k);
-        c.drawRoundRect(r, 5*k, 5*k, p);
-        Paint fill = new Paint(p); fill.setStyle(Paint.Style.FILL); fill.setAlpha(30);
-        Path m = new Path();
-        m.moveTo(15*k, 48*k); m.lineTo(28*k, 34*k); m.lineTo(36*k, 41*k); m.lineTo(44*k, 31*k); m.lineTo(51*k, 48*k); m.close();
-        c.drawPath(m, fill); c.drawPath(m, p);
-        Paint dot = new Paint(p); dot.setStyle(Paint.Style.FILL);
-        c.drawCircle(24*k, 23*k, 4.2f*k, dot);
+    private static void drawImages(Canvas c, Paint stroke, Paint white, Paint fill, Paint accent, float k) {
+        RectF frame = new RectF(9*k, 9*k, 55*k, 55*k);
+        c.drawRoundRect(frame, 6*k, 6*k, white);
+        c.drawRoundRect(frame, 6*k, 6*k, stroke);
+
+        Path mountains = new Path();
+        mountains.moveTo(13*k, 49*k);
+        mountains.lineTo(27*k, 34*k);
+        mountains.lineTo(36*k, 43*k);
+        mountains.lineTo(45*k, 32*k);
+        mountains.lineTo(52*k, 49*k);
+        mountains.close();
+        c.drawPath(mountains, fill);
+        c.drawPath(mountains, stroke);
+        c.drawCircle(43*k, 21*k, 5*k, accent);
     }
 
-    private static void drawProjects(Canvas c, Paint p, float k) {
-        Path f = new Path();
-        f.moveTo(9*k, 18*k); f.lineTo(25*k, 18*k); f.lineTo(30*k, 24*k); f.lineTo(55*k, 24*k); f.lineTo(55*k, 51*k); f.lineTo(9*k, 51*k); f.close();
-        Paint fill = new Paint(p); fill.setStyle(Paint.Style.FILL); fill.setAlpha(24);
-        c.drawPath(f, fill); c.drawPath(f, p);
-        p.setStrokeWidth(3.7f*k);
-        c.drawLine(19*k, 37*k, 25*k, 32*k, p); c.drawLine(19*k, 37*k, 25*k, 42*k, p);
-        c.drawLine(45*k, 37*k, 39*k, 32*k, p); c.drawLine(45*k, 37*k, 39*k, 42*k, p);
+    private static void drawProjects(Canvas c, Paint stroke, Paint white, Paint fill, Paint accent, float k) {
+        Path back = new Path();
+        back.moveTo(12*k, 15*k);
+        back.lineTo(27*k, 15*k);
+        back.lineTo(33*k, 21*k);
+        back.lineTo(52*k, 21*k);
+        back.quadTo(56*k, 21*k, 56*k, 25*k);
+        back.lineTo(56*k, 45*k);
+        back.lineTo(15*k, 45*k);
+        back.close();
+        c.drawPath(back, fill);
+        c.drawPath(back, stroke);
+
+        Path front = new Path();
+        front.moveTo(8*k, 26*k);
+        front.lineTo(23*k, 26*k);
+        front.lineTo(28*k, 31*k);
+        front.lineTo(53*k, 31*k);
+        front.lineTo(53*k, 52*k);
+        front.lineTo(8*k, 52*k);
+        front.close();
+        c.drawPath(front, white);
+        c.drawPath(front, stroke);
+        c.drawLine(14*k, 35*k, 46*k, 35*k, accent);
     }
 
-    private static void drawAccounts(Canvas c, Paint p, float k) {
-        Paint fill = new Paint(p); fill.setStyle(Paint.Style.FILL); fill.setAlpha(28);
-        c.drawCircle(32*k, 21*k, 9*k, fill); c.drawCircle(32*k, 21*k, 9*k, p);
-        Path s = new Path(); s.moveTo(14*k, 53*k); s.quadTo(16*k, 36*k, 32*k, 36*k); s.quadTo(48*k, 36*k, 50*k, 53*k);
-        c.drawPath(s, fill); c.drawPath(s, p);
+    private static void drawAccounts(Canvas c, Paint stroke, Paint white, Paint fill, Paint accent, float k) {
+        c.drawCircle(32*k, 21*k, 10*k, white);
+        c.drawCircle(32*k, 21*k, 10*k, stroke);
+
+        Path shoulders = new Path();
+        shoulders.moveTo(12*k, 54*k);
+        shoulders.quadTo(14*k, 36*k, 32*k, 36*k);
+        shoulders.quadTo(50*k, 36*k, 52*k, 54*k);
+        shoulders.close();
+        c.drawPath(shoulders, fill);
+        c.drawPath(shoulders, stroke);
+
+        c.drawCircle(32*k, 21*k, 4.2f*k, accent);
+    }
+
+    private static int withAlpha(int color, int alpha) {
+        return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
     }
 }
