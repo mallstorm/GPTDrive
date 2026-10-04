@@ -53,6 +53,19 @@ final class BrowserSessionStore {
         }
     }
 
+    static String chatGptAccountId(Context context, long accountId) {
+        try {
+            JSONObject root = new JSONObject(load(context, accountId));
+            JSONObject account = root.optJSONObject("account");
+            if (account == null) return "";
+            String id = account.optString("id", "").trim();
+            if (!id.isEmpty()) return id;
+            return account.optString("account_id", "").trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     private static SharedPreferences prefs(Context context) {
         return context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
