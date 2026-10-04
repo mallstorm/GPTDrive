@@ -27,6 +27,11 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+
 public final class BrowserActivity extends Activity {
     public static final String EXTRA_SECTION = "section";
     public static final String EXTRA_URL = "url";
@@ -117,7 +122,8 @@ public final class BrowserActivity extends Activity {
         s.setDatabaseEnabled(true);
         s.setLoadsImagesAutomatically(true);
         s.setMediaPlaybackRequiresUserGesture(true);
-        s.setUserAgentString(s.getUserAgentString() + " GPTDrive/0.4.7");
+        s.setUserAgentString(s.getUserAgentString() + " GPTDrive/0.4.8");
+        if (BrowserSessionStore.has(this, accountId)) s.setCacheMode(WebSettings.LOAD_NO_CACHE);
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(web, true);
@@ -128,6 +134,8 @@ public final class BrowserActivity extends Activity {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
                 AccountSession.snapshot(BrowserActivity.this, accountId);
+                String imported = BrowserSessionStore.load(BrowserActivity.this, accountId);
+                if (BrowserSessionStore.isUsable(imported)) bridge.captureAccount(imported);
                 if (url != null && url.contains("chatgpt.com")) {
                     injectScanner();
                     if (url.contains("/library") || url.contains("/images") || (!"Library".equals(section) && !"Images".equals(section))) {
@@ -139,12 +147,35 @@ public final class BrowserActivity extends Activity {
 
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 try {
+                    WebResourceResponse imported = importedSessionResponse(request);
+                    if (imported != null) return imported;
                     if (request != null && request.getUrl() != null) bridge.captureResource(request.getUrl().toString());
                 } catch (Exception ignored) {}
                 return super.shouldInterceptRequest(view, request);
             }
         });
         web.setDownloadListener((url, ua, contentDisposition, mimetype, len) -> download(url, ua, contentDisposition, mimetype));
+    }
+
+    private WebResourceResponse importedSessionResponse(WebResourceRequest request) {
+        if (request == null || request.getUrl() == null || !"GET".equalsIgnoreCase(request.getMethod())) return null;
+        Uri uri = request.getUrl();
+        String host = uri.getHost();
+        String path = uri.getPath();
+        if (host == null || path == null || !host.equalsIgnoreCase("chatgpt.com") || !"/api/auth/session".equals(path)) return null;
+        String json = BrowserSessionStore.load(this, accountId);
+        if (!BrowserSessionStore.isUsable(json)) return null;
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Cache-Control", "no-store, no-cache, must-revalidate");
+        headers.put("Pragma", "no-cache");
+        headers.put("Content-Type", "application/json; charset=utf-8");
+        return new WebResourceResponse(
+                "application/json",
+                "UTF-8",
+                200,
+                "OK",
+                headers,
+                new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)));
     }
 
     private LinearLayout buildSyncPanel() {
@@ -323,6 +354,8 @@ public final class BrowserActivity extends Activity {
             DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
             String cookie = AccountSession.cookieHeader(this, accountId, url);
             if (cookie != null) r.addRequestHeader("Cookie", cookie);
+            String bearer = AccountSession.bearerToken(this, accountId);
+            if (bearer != null && !bearer.isEmpty()) r.addRequestHeader("Authorization", "Bearer " + bearer);
             if (ua != null) r.addRequestHeader("User-Agent", ua);
             r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             String name = android.webkit.URLUtil.guessFileName(url, disposition, mime);
