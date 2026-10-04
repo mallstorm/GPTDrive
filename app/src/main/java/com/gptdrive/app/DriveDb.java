@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -156,7 +157,6 @@ final class DriveDb extends SQLiteOpenHelper {
         if (plan != null && !plan.trim().isEmpty()) v.put("plan", plan.trim());
         if (usedBytes > 0) v.put("storage_used", usedBytes);
         if (quotaBytes > 0) v.put("storage_quota", quotaBytes);
-        v.put("last_sync", System.currentTimeMillis());
         v.put("updated", System.currentTimeMillis());
         getWritableDatabase().update("accounts", v, "id=?", new String[]{Long.toString(id)});
     }
@@ -190,6 +190,17 @@ final class DriveDb extends SQLiteOpenHelper {
             db.setTransactionSuccessful();
             return true;
         } finally { db.endTransaction(); }
+    }
+
+    void pruneFalsePositives(long accountId) {
+        SQLiteDatabase db = getWritableDatabase();
+        String where = "account_id=? AND (" +
+                "lower(name) IN ('usage','path','content','capabilities','library','storage','metadata','manifest') OR " +
+                "lower(name) LIKE 'favicon%' OR lower(name) LIKE '%48%px%' OR " +
+                "lower(url) LIKE '%/files/usage%' OR lower(url) LIKE '%/files/path%' OR " +
+                "lower(url) LIKE '%/files/capabilities%' OR lower(url) LIKE '%/backend-api/files?%' OR " +
+                "lower(url) LIKE '%favicon%' OR lower(url) LIKE '%/assets/%' OR lower(url) LIKE '%/static/%')";
+        db.delete("items", where, new String[]{Long.toString(accountId)});
     }
 
     void upsert(String category, String name, String url, String mime) {
@@ -349,6 +360,7 @@ final class DriveDb extends SQLiteOpenHelper {
         if (s.contains(".webp")) return "image/webp";
         if (s.contains(".gif")) return "image/gif";
         if (s.contains(".heic")) return "image/heic";
+        if (s.contains(".avif")) return "image/avif";
         if (s.contains(".pdf")) return "application/pdf";
         if (s.contains(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         if (s.contains(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
