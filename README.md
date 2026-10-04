@@ -1,31 +1,35 @@
 # GPT Drive for Android
 
-GPT Drive is a very small native Android client that presents the user's ChatGPT Library as a cloud-drive-like file manager.
+GPT Drive is a tiny native Android client that presents ChatGPT Library content as cloud-drive-like storage.
 
-## v0.2.0
-- Native home screen and native category browser
-- Library / Images / Projects / Archived sections
-- Image gallery with authenticated thumbnails
-- Full-screen native image viewer
-- Search inside indexed categories
-- Open and download indexed files
-- WebView is now used only for ChatGPT sign-in and synchronization
-- Improved DOM + WebView resource indexing
-- Project/archive ChatGPT links can be indexed separately from downloadable files
-- SQLite v2 keeps the same resource in more than one category
-- Android DocumentsProvider exposes GPT Drive in the system file picker
-- Image thumbnails are exposed to Android DocumentsProvider
+## v0.3.0 — Multi-Account Drives
+- Multiple ChatGPT accounts in one APK
+- Native account switcher on the GPT Drive home screen
+- Add, switch, synchronize and remove account profiles
+- Separate SQLite metadata namespace for every account
+- Existing v0.2 indexed content migrates into the first account
+- ChatGPT WebView session cookies are snapshotted per account and restored when switching
+- Account identity is discovered from the signed-in ChatGPT session when available
+- **Each account is exposed as its own Android DocumentsProvider root**
+- Each root contains Library / Images / Projects / Archived
+- Files can stream from a non-active account using its stored session
+- Android file pickers can show multiple GPT Drive account sources at the same time
+- Native file browser, search, image gallery, image viewer and downloads remain available
 - No AndroidX, Compose, Glide, Picasso or other third-party runtime libraries
 
-## How it works
+## Usage
 1. Open GPT Drive.
-2. Tap **Синхронизировать Library** and sign in to ChatGPT if needed.
-3. Let the ChatGPT Library/Images page load, then tap **Готово**.
-4. Browse the indexed content in GPT Drive's native UI.
-5. GPT Drive also appears as a document source in Android's system file picker.
+2. Tap the account selector at the top.
+3. Use **＋ Добавить ChatGPT аккаунт** to add another account and sign in in the synchronization WebView.
+4. Switch accounts from the account screen; the native GPT Drive tree changes to that account.
+5. Open Android's system file picker to see a separate `GPT Drive · <account>` root for every saved account.
+6. Synchronize Library / Images / Projects / Archived as needed to refresh the local metadata index.
+
+## Important platform note
+Android does not let a normal third-party application register itself as a physical `StorageVolume` like an SD card or USB flash drive. GPT Drive therefore uses Android's official `DocumentsProvider` cloud-storage mechanism. File managers that integrate the Storage Access Framework can show the GPT Drive account roots as external document sources. A vendor file manager may choose not to surface third-party document providers in its physical-storage strip.
 
 ## Architecture
-The app deliberately isolates the ChatGPT web-session adapter. ChatGPT does not expose a stable public API for the entire consumer Library/Projects surface, so v0.2 indexes content visible to the authenticated web session and stores only metadata locally. Remote content is streamed or downloaded on demand using the user's own WebView cookies.
+ChatGPT does not expose a stable public consumer API for the complete Library / Projects surface. GPT Drive therefore isolates its web-session adapter, indexes metadata visible to the authenticated user session, and streams remote content on demand. v0.3 stores session-cookie snapshots locally per account to support switching; this is an experimental compatibility layer and may require adaptation when ChatGPT's web authentication changes.
 
 ## Build
 Requires JDK 17, Android SDK 35 and Gradle 8.9.
