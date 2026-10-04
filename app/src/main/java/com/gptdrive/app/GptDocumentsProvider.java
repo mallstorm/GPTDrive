@@ -10,8 +10,6 @@ import android.provider.DocumentsContract;
 import android.provider.DocumentsProvider;
 import java.io.FileNotFoundException;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 
 public final class GptDocumentsProvider extends DocumentsProvider {
     private static final String ROOT = "gptdrive";
@@ -111,24 +109,14 @@ public final class GptDocumentsProvider extends DocumentsProvider {
     }
 
     private void stream(DriveItem item, ParcelFileDescriptor writeSide) {
-        HttpURLConnection h = null;
-        try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(writeSide)) {
-            h = (HttpURLConnection) new URL(item.url).openConnection();
-            h.setInstanceFollowRedirects(true);
-            h.setConnectTimeout(15000);
-            h.setReadTimeout(30000);
-            String cookie = AccountSession.cookieHeader(getContext(), item.accountId, item.url);
-            if (cookie != null) h.setRequestProperty("Cookie", cookie);
-            h.setRequestProperty("User-Agent", "Mozilla/5.0 Android GPTDrive/0.4");
-            try (java.io.InputStream in = h.getInputStream()) {
-                byte[] b = new byte[32768];
-                int n;
-                while ((n = in.read(b)) != -1) out.write(b, 0, n);
-            }
+        try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(writeSide);
+             RemoteFileSource.Connection c = RemoteFileSource.open(getContext(), item.accountId, item.url);
+             java.io.InputStream in = c.inputStream()) {
+            byte[] b = new byte[32768];
+            int n;
+            while ((n = in.read(b)) != -1) out.write(b, 0, n);
         } catch (Exception ignored) {
             try { writeSide.close(); } catch (Exception ignored2) {}
-        } finally {
-            if (h != null) h.disconnect();
         }
     }
 

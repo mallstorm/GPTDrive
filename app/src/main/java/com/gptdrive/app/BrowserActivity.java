@@ -70,7 +70,7 @@ public final class BrowserActivity extends Activity {
     private final Runnable statusLoop = new Runnable() {
         @Override public void run() {
             updateState();
-            handler.postDelayed(this, 600);
+            handler.postDelayed(this, 500);
         }
     };
 
@@ -86,6 +86,7 @@ public final class BrowserActivity extends Activity {
         sectionIndex = indexOfSection(section);
         syncMode = !freshLogin;
         db.pruneFalsePositives(accountId);
+        IndexMaintenance.pruneTransientSignedUrls(db, accountId);
 
         bridge = new LibraryBridge(db, accountId);
         bridge.setCategory(section);
@@ -129,7 +130,7 @@ public final class BrowserActivity extends Activity {
         s.setDatabaseEnabled(true);
         s.setLoadsImagesAutomatically(true);
         s.setMediaPlaybackRequiresUserGesture(true);
-        s.setUserAgentString(s.getUserAgentString() + " GPTDrive/0.5.0");
+        s.setUserAgentString(s.getUserAgentString() + " GPTDrive/0.5.1");
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(web, true);
@@ -142,13 +143,13 @@ public final class BrowserActivity extends Activity {
                 AccountSession.snapshot(BrowserActivity.this, accountId);
                 if (url != null && url.contains("chatgpt.com")) {
                     injectScannerAndApiCapture();
-                    boolean targetPage = url.contains(sectionUrlMarker(section)) || (!"Library".equals(section) && !"Images".equals(section));
-                    if (targetPage) {
+                    String lower = url.toLowerCase(Locale.ROOT);
+                    if (!lower.contains("/auth/") && !lower.contains("/login")) {
                         pageReady = true;
                         lastChangeAt = System.currentTimeMillis();
                     }
                 }
-                handler.postDelayed(BrowserActivity.this::updateState, 350);
+                handler.postDelayed(BrowserActivity.this::updateState, 250);
             }
 
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
@@ -219,7 +220,7 @@ public final class BrowserActivity extends Activity {
         stats.addView(syncBytes, new LinearLayout.LayoutParams(0, dp(34), 1));
         card.addView(stats);
 
-        TextView note = text("Читаю структурированные ответы ChatGPT, а не служебные URL. Файлы, изображения, проекты и архив проходят отдельные фазы.", 10, false, MUTED);
+        TextView note = text("Читаю структурированные ответы ChatGPT. Временные подписанные ссылки не сохраняются: для файлов используется стабильный file_id.", 10, false, MUTED);
         note.setPadding(0, dp(10), 0, 0);
         note.setLineSpacing(0, 1.12f);
         card.addView(note);
@@ -234,7 +235,7 @@ public final class BrowserActivity extends Activity {
         sp.setMargins(0, dp(20), 0, 0);
         page.addView(syncButton, sp);
 
-        TextView hint = text("После завершения индекс доступен в GPT Drive и Android Files. Служебные usage/path/content/favicon больше не считаются файлами.", 10, false, MUTED);
+        TextView hint = text("Каждая фаза ограничена по времени. Если ChatGPT редиректит внутреннюю страницу, синхронизация всё равно продолжится дальше.", 10, false, MUTED);
         hint.setGravity(Gravity.CENTER);
         hint.setPadding(dp(18), dp(13), dp(18), 0);
         page.addView(hint);
@@ -253,6 +254,7 @@ public final class BrowserActivity extends Activity {
             sectionIndex = 0;
             section = FULL_SECTIONS[0];
             bridge.setCategory(section);
+            IndexMaintenance.pruneTransientSignedUrls(db, accountId);
             startSection(section);
         }
 
@@ -297,12 +299,15 @@ public final class BrowserActivity extends Activity {
             syncStatus.setText("Ожидаю вход в ChatGPT…");
             return;
         }
+
+        if (!pageReady && elapsed >= 8000) pageReady = true;
         if (!pageReady) {
             syncStatus.setText(phase + " " + part + "/" + totalParts + " · открываю…");
             return;
         }
 
-        if (elapsed < 10000 || quiet < 5000) {
+        boolean phaseDone = (elapsed >= 7000 && quiet >= 2500) || elapsed >= 18000;
+        if (!phaseDone) {
             syncStatus.setText(phase + " " + part + "/" + totalParts + " · читаю данные…");
             return;
         }
@@ -314,6 +319,7 @@ public final class BrowserActivity extends Activity {
 
         if (!markedComplete) {
             db.pruneFalsePositives(accountId);
+            IndexMaintenance.pruneTransientSignedUrls(db, accountId);
             db.markSynced(accountId);
             notifyRoots();
             markedComplete = true;
@@ -359,7 +365,7 @@ public final class BrowserActivity extends Activity {
         lastChangeAt = System.currentTimeMillis();
         sectionStartedAt = lastChangeAt;
         syncStatus.setText(phaseLabel(section) + " " + (sectionIndex + 1) + "/" + FULL_SECTIONS.length + " · открываю…");
-        handler.postDelayed(() -> startSection(section), 250);
+        handler.postDelayed(() -> startSection(section), 150);
     }
 
     private int indexOfSection(String value) {
@@ -374,12 +380,6 @@ public final class BrowserActivity extends Activity {
         return "Файлы";
     }
 
-    private String sectionUrlMarker(String s) {
-        if ("Library".equals(s)) return "/library";
-        if ("Images".equals(s)) return "/images";
-        return "chatgpt.com";
-    }
-
     private String startUrl(String s) {
         if ("Library".equals(s)) return "https://chatgpt.com/library";
         if ("Images".equals(s)) return "https://chatgpt.com/images";
@@ -391,27 +391,29 @@ public final class BrowserActivity extends Activity {
         String js = "(function(){try{" +
                 "const sec='" + safeSection + "';" +
                 "const relevant=u=>{u=(u||'').toString().toLowerCase();return (u.includes('/backend-api/')||u.includes('/api/'))&&(u.includes('file')||u.includes('library')||u.includes('image')||u.includes('asset')||u.includes('upload')||u.includes('project')||u.includes('archive')||u.includes('conversation')||u.includes('usage')||u.includes('storage')||u.includes('quota')||u.includes('capabilit'));};" +
-                "const send=(u,t)=>{try{if(relevant(u)&&t&&t.length<8000000)GPTDriveBridge.captureApi(String(u),String(t));}catch(e){}};" +
+                "const send=(u,t)=>{try{if(relevant(u)&&t&&t.length<3000000)GPTDriveBridge.captureApi(String(u),String(t));}catch(e){}};" +
                 "if(!window.__gptDriveApiHook){window.__gptDriveApiHook=true;" +
                 "const of=window.fetch;window.fetch=function(){const a=arguments;return of.apply(this,a).then(r=>{try{const u=(typeof a[0]==='string'?a[0]:(a[0]&&a[0].url)||r.url||'');if(relevant(u))r.clone().text().then(t=>send(u,t)).catch(()=>{});}catch(e){}return r;});};" +
                 "const oo=XMLHttpRequest.prototype.open,os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.open=function(m,u){this.__gdu=u;return oo.apply(this,arguments);};XMLHttpRequest.prototype.send=function(){try{this.addEventListener('load',function(){try{if(relevant(this.__gdu)&&typeof this.responseText==='string')send(this.__gdu,this.responseText);}catch(e){}});}catch(e){}return os.apply(this,arguments);};}" +
-                "try{[...performance.getEntriesByType('resource')].map(x=>x.name).filter(relevant).slice(-80).forEach(u=>{try{of(u,{credentials:'include'}).then(r=>r.text()).then(t=>send(u,t)).catch(()=>{});}catch(e){}});}catch(e){}" +
+                "try{[...new Set([...performance.getEntriesByType('resource')].map(x=>x.name).filter(relevant))].slice(-24).forEach(u=>{try{of(u,{credentials:'include'}).then(r=>r.text()).then(t=>send(u,t)).catch(()=>{});}catch(e){}});}catch(e){}" +
                 "try{of('/api/auth/session',{credentials:'include'}).then(r=>r.text()).then(t=>{try{GPTDriveBridge.captureAccount(t);}catch(e){}}).catch(()=>{});}catch(e){}" +
                 "function bytes(t){try{const m=((t||'')+'').replace(',','.').match(/([0-9]+(?:\\.[0-9]+)?)\\s*(KB|MB|GB|TB|КБ|МБ|ГБ|ТБ)/i);if(!m)return 0;const n=parseFloat(m[1]);const u=m[2].toUpperCase();let k=1;if(u==='KB'||u==='КБ')k=1024;else if(u==='MB'||u==='МБ')k=1048576;else if(u==='GB'||u==='ГБ')k=1073741824;else if(u==='TB'||u==='ТБ')k=1099511627776;return Math.round(n*k);}catch(e){return 0;}}" +
                 "function ctx(e){try{const p=e.closest('li,article,[role=row],[data-testid]')||e.parentElement;return p?((p.innerText||'')+''):'';}catch(x){return '';}}" +
-                "function scan(){try{const out=[];document.querySelectorAll('a[href]').forEach(a=>{const u=a.href||'',l=u.toLowerCase(),n=(a.innerText||a.getAttribute('aria-label')||a.title||'').trim();let kind='';if(sec==='Projects'&&(l.includes('/project')||l.includes('/g/g-p-')))kind='link';if(sec==='Archived'&&l.includes('/c/'))kind='link';if(kind||l.includes('oaiusercontent')||/\\/files\\/file[-_][a-z0-9_-]+\\/content/i.test(l))out.push({url:u,name:n,kind:kind,sizeBytes:bytes(ctx(a))});});document.querySelectorAll('img[src],img[srcset]').forEach(i=>{const u=i.currentSrc||i.src||'',l=u.toLowerCase();if(!u||l.includes('favicon')||l.includes('/assets/')||l.includes('static')||l.includes('logo'))return;out.push({url:u,name:(i.alt||i.getAttribute('aria-label')||'').trim(),mime:'image/*',sizeBytes:bytes(ctx(i))});});GPTDriveBridge.capture(JSON.stringify(out.slice(0,2000)));}catch(e){}}" +
-                "scan();if(!window.__gptDriveObserver){window.__gptDriveObserver=true;let tm=null;new MutationObserver(()=>{clearTimeout(tm);tm=setTimeout(scan,500);}).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['href','src','srcset']});}" +
-                "if(!window.__gptDriveAutoScroll){window.__gptDriveAutoScroll=true;let rounds=0;const iv=setInterval(()=>{try{scan();const els=[document.scrollingElement,...document.querySelectorAll('main,section,div')].filter(Boolean).filter(e=>e.scrollHeight>e.clientHeight+180);els.sort((a,b)=>(b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight));const e=els[0];if(e)e.scrollTop=Math.min(e.scrollHeight,e.scrollTop+Math.max(300,e.clientHeight*.8));rounds++;if(rounds>=24)clearInterval(iv);}catch(e){clearInterval(iv);}},700);}" +
-                "if(sec==='Projects'||sec==='Archived'){setTimeout(()=>{try{const terms=sec==='Projects'?['project','projects','проект','проекты']:['archived','archive','архив','архивированные'];const els=[...document.querySelectorAll('a,button,[role=button]')];const e=els.find(x=>{const t=((x.innerText||x.getAttribute('aria-label')||'')+'').toLowerCase();return terms.some(k=>t.includes(k));});if(e)e.click();}catch(e){}},900);}" +
+                "function scan(){try{const out=[];document.querySelectorAll('a[href]').forEach(a=>{const u=a.href||'',l=u.toLowerCase(),n=(a.innerText||a.getAttribute('aria-label')||a.title||'').trim();let kind='';if(sec==='Projects'&&(l.includes('/project')||l.includes('/g/g-p-')))kind='link';if(sec==='Archived'&&l.includes('/c/'))kind='link';if(kind||/\\/files\\/file[-_][a-z0-9_-]+\\/content/i.test(l))out.push({url:u,name:n,kind:kind,sizeBytes:bytes(ctx(a))});});document.querySelectorAll('img[src],img[srcset]').forEach(i=>{const u=i.currentSrc||i.src||'',l=u.toLowerCase();if(!u||l.includes('favicon')||l.includes('/assets/')||l.includes('static')||l.includes('logo')||l.includes('oaiusercontent'))return;out.push({url:u,name:(i.alt||i.getAttribute('aria-label')||'').trim(),mime:'image/*',sizeBytes:bytes(ctx(i))});});GPTDriveBridge.capture(JSON.stringify(out.slice(0,1200)));}catch(e){}}" +
+                "scan();if(!window.__gptDriveObserver){window.__gptDriveObserver=true;let tm=null;new MutationObserver(()=>{clearTimeout(tm);tm=setTimeout(scan,350);}).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['href','src','srcset']});}" +
+                "if(!window.__gptDriveAutoScroll){window.__gptDriveAutoScroll=true;let rounds=0;const iv=setInterval(()=>{try{scan();const els=[document.scrollingElement,...document.querySelectorAll('main,section,div')].filter(Boolean).filter(e=>e.scrollHeight>e.clientHeight+180);els.sort((a,b)=>(b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight));const e=els[0];if(e)e.scrollTop=Math.min(e.scrollHeight,e.scrollTop+Math.max(400,e.clientHeight));rounds++;if(rounds>=14)clearInterval(iv);}catch(e){clearInterval(iv);}},550);}" +
+                "if(sec==='Projects'||sec==='Archived'){setTimeout(()=>{try{const terms=sec==='Projects'?['project','projects','проект','проекты']:['archived','archive','архив','архивированные'];const els=[...document.querySelectorAll('a,button,[role=button]')];const e=els.find(x=>{const t=((x.innerText||x.getAttribute('aria-label')||'')+'').toLowerCase();return terms.some(k=>t.includes(k));});if(e)e.click();}catch(e){}},700);}" +
                 "}catch(e){}})();";
         web.evaluateJavascript(js, null);
     }
 
     private void download(String url, String ua, String disposition, String mime) {
         try {
-            DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
-            String cookie = AccountSession.cookieHeader(this, accountId, url);
+            String resolved = RemoteFileSource.stableUrl(url);
+            DownloadManager.Request r = new DownloadManager.Request(Uri.parse(resolved));
+            String cookie = AccountSession.cookieHeader(this, accountId, resolved);
             if (cookie != null) r.addRequestHeader("Cookie", cookie);
+            r.addRequestHeader("Referer", "https://chatgpt.com/");
             if (ua != null) r.addRequestHeader("User-Agent", ua);
             r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             String name = android.webkit.URLUtil.guessFileName(url, disposition, mime);
@@ -426,6 +428,7 @@ public final class BrowserActivity extends Activity {
     private void finishDone() {
         AccountSession.snapshot(this, accountId);
         db.pruneFalsePositives(accountId);
+        IndexMaintenance.pruneTransientSignedUrls(db, accountId);
         if (markedComplete) db.markSynced(accountId);
         notifyRoots();
         finish();
