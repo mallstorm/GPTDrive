@@ -1,7 +1,6 @@
 package com.gptdrive.app;
 
 import android.app.Activity;
-import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.widget.Button;
@@ -70,6 +69,7 @@ public final class ImageViewerActivity extends Activity {
             android.content.Intent i = new android.content.Intent(this, BrowserActivity.class);
             i.putExtra(BrowserActivity.EXTRA_SECTION, item.category);
             i.putExtra(BrowserActivity.EXTRA_URL, item.url);
+            i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID, item.accountId);
             startActivity(i);
         });
         actions.addView(save, new LinearLayout.LayoutParams(0, dp(50), 1));
@@ -84,7 +84,7 @@ public final class ImageViewerActivity extends Activity {
                 image.setImageBitmap(bitmap);
                 status.setText(bitmap.getWidth() + " × " + bitmap.getHeight());
             } else {
-                status.setText("Не удалось загрузить. Возможно, ссылка ChatGPT истекла — синхронизируй раздел заново.");
+                status.setText("Не удалось загрузить. Возможно, ссылка ChatGPT истекла — синхронизируй этот аккаунт заново.");
             }
         }));
     }
