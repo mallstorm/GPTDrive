@@ -9,38 +9,18 @@ final class AccountSession {
     private static final String CHATGPT = "https://chatgpt.com";
     private static final String AUTH = "https://auth.openai.com";
     private static final String FILES = "https://files.oaiusercontent.com";
-    private static final String BROWSER_SESSION_MARKER = "__GPTDRIVE_BROWSER_SESSION__";
 
     private AccountSession() {}
 
     static void snapshot(Context context, long accountId) {
-        if (accountId <= 0) return;
         try {
             CookieManager cm = CookieManager.getInstance();
-            DriveDb db = new DriveDb(context.getApplicationContext());
-            AccountProfile existing = db.accountById(accountId);
-            if (existing != null && isBrowserSessionMarker(existing.cookieChatgpt)
-                    && BrowserSessionStore.has(context, accountId)) {
-                db.saveCookies(accountId, BROWSER_SESSION_MARKER, "", "");
-                cm.flush();
-                return;
-            }
             String chatgpt = cm.getCookie(CHATGPT);
             String auth = cm.getCookie(AUTH);
             String files = cm.getCookie(FILES);
-            db.saveCookies(accountId, chatgpt, auth, files);
+            new DriveDb(context.getApplicationContext()).saveCookies(accountId, chatgpt, auth, files);
             cm.flush();
         } catch (Exception ignored) {}
-    }
-
-    static void markBrowserSession(Context context, long accountId) {
-        if (accountId <= 0) return;
-        new DriveDb(context.getApplicationContext()).saveCookies(accountId, BROWSER_SESSION_MARKER, "", "");
-    }
-
-    static boolean isBrowserSession(AccountProfile profile, Context context) {
-        return profile != null && isBrowserSessionMarker(profile.cookieChatgpt)
-                && BrowserSessionStore.has(context, profile.id);
     }
 
     static void switchTo(Context context, long accountId, Runnable ready) {
@@ -50,29 +30,15 @@ final class AccountSession {
         if (target == null) { runMain(ready); return; }
 
         CookieManager cm = CookieManager.getInstance();
-        if (isBrowserSession(target, context)) {
-            if (current != accountId && current > 0) snapshot(context, current);
-            restoreSaved(context, accountId, ready);
-            return;
-        }
-
         String live = cm.getCookie(CHATGPT);
         if (current == accountId && live != null && !live.trim().isEmpty()) {
             runMain(ready);
             return;
         }
 
-        if (current != accountId && current > 0) snapshot(context, current);
-        restoreSaved(context, accountId, ready);
-    }
-
-    static void restoreSaved(Context context, long accountId, Runnable ready) {
-        DriveDb db = new DriveDb(context.getApplicationContext());
-        AccountProfile target = db.accountById(accountId);
-        if (target == null) { runMain(ready); return; }
-        CookieManager cm = CookieManager.getInstance();
+        if (current != accountId) snapshot(context, current);
         cm.removeAllCookies(ok -> {
-            if (!isBrowserSession(target, context)) restore(target);
+            restore(target);
             db.setActiveAccount(accountId);
             cm.flush();
             runMain(ready);
@@ -82,8 +48,7 @@ final class AccountSession {
     static void startFresh(Context context, long accountId, Runnable ready) {
         DriveDb db = new DriveDb(context.getApplicationContext());
         long current = db.activeAccountId();
-        if (current != accountId && current > 0) snapshot(context, current);
-        BrowserSessionStore.clear(context, accountId);
+        if (current != accountId) snapshot(context, current);
         CookieManager cm = CookieManager.getInstance();
         cm.removeAllCookies(ok -> {
             db.saveCookies(accountId, "", "", "");
@@ -96,22 +61,17 @@ final class AccountSession {
     static String cookieHeader(Context context, long accountId, String url) {
         try {
             DriveDb db = new DriveDb(context.getApplicationContext());
-            AccountProfile a = db.accountById(accountId);
-            if (a != null && isBrowserSessionMarker(a.cookieChatgpt)) return null;
             if (db.activeAccountId() == accountId) {
                 String live = CookieManager.getInstance().getCookie(url);
                 if (live != null && !live.trim().isEmpty()) return live;
             }
+            AccountProfile a = db.accountById(accountId);
             if (a == null) return null;
             String host = url == null ? "" : url.toLowerCase();
             if (host.contains("chatgpt.com")) return emptyToNull(a.cookieChatgpt);
             if (host.contains("auth.openai.com")) return emptyToNull(a.cookieAuth);
             return emptyToNull(a.cookieFiles);
         } catch (Exception e) { return null; }
-    }
-
-    static String bearerToken(Context context, long accountId) {
-        return BrowserSessionStore.accessToken(context, accountId);
     }
 
     private static void restore(AccountProfile a) {
@@ -122,7 +82,7 @@ final class AccountSession {
     }
 
     private static void setHeader(CookieManager cm, String url, String header) {
-        if (header == null || header.trim().isEmpty() || isBrowserSessionMarker(header)) return;
+        if (header == null || header.trim().isEmpty()) return;
         String[] cookies = header.split(";\\s*");
         for (String pair : cookies) {
             pair = pair.trim();
@@ -131,12 +91,7 @@ final class AccountSession {
         }
     }
 
-    private static boolean isBrowserSessionMarker(String value) {
-        return BROWSER_SESSION_MARKER.equals(value == null ? "" : value.trim());
-    }
-
-    private static boolean isEmpty(String s) { return s == null || s.trim().isEmpty(); }
-    private static String emptyToNull(String s) { return isEmpty(s) || isBrowserSessionMarker(s) ? null : s; }
+    private static String emptyToNull(String s) { return s == null || s.trim().isEmpty() ? null : s; }
 
     private static void runMain(Runnable r) {
         if (r == null) return;

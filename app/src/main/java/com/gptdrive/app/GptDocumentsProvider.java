@@ -119,9 +119,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
             h.setReadTimeout(30000);
             String cookie = AccountSession.cookieHeader(getContext(), item.accountId, item.url);
             if (cookie != null) h.setRequestProperty("Cookie", cookie);
-            String bearer = AccountSession.bearerToken(getContext(), item.accountId);
-            if (bearer != null && !bearer.isEmpty()) h.setRequestProperty("Authorization", "Bearer " + bearer);
-            h.setRequestProperty("User-Agent", "Mozilla/5.0 Android GPTDrive/0.4.8");
+            h.setRequestProperty("User-Agent", "Mozilla/5.0 Android GPTDrive/0.4");
             try (java.io.InputStream in = h.getInputStream()) {
                 byte[] b = new byte[32768];
                 int n;
