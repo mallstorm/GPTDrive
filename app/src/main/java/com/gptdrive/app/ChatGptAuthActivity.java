@@ -70,7 +70,6 @@ public final class ChatGptAuthActivity extends Activity {
         s.setJavaScriptCanOpenWindowsAutomatically(true);
         s.setSupportMultipleWindows(false);
         s.setMediaPlaybackRequiresUserGesture(true);
-        // Keep the login inside GPT Drive while presenting a normal Chrome-like UA.
         s.setUserAgentString("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36");
 
         CookieManager cm = CookieManager.getInstance();
@@ -120,7 +119,8 @@ public final class ChatGptAuthActivity extends Activity {
                 String email = user == null ? "" : user.optString("email", "").trim();
                 String name = user == null ? "" : user.optString("name", "").trim();
                 String accessToken = root.optString("accessToken", "").trim();
-                // Do not accept the anonymous login page as an authenticated account.
+                // Registered accounts must have a real ChatGPT identity. Anonymous
+                // cookies from the login page are never enough.
                 if (email.isEmpty() && accessToken.isEmpty()) return;
                 authorized = true;
                 runOnUiThread(() -> completeAuthorization(json, name, email));
@@ -132,8 +132,6 @@ public final class ChatGptAuthActivity extends Activity {
         if (closing) return;
         long finalId = targetId;
 
-        // If the same ChatGPT account was already registered, reuse it rather than
-        // creating a duplicate card.
         if (newAccount && !email.isEmpty()) {
             for (AccountProfile a : db.listAccounts()) {
                 if (a.id != targetId && a.email != null && email.equalsIgnoreCase(a.email.trim())) {
@@ -146,7 +144,7 @@ public final class ChatGptAuthActivity extends Activity {
         AccountSession.snapshot(this, finalId);
         LibraryBridge bridge = new LibraryBridge(db, finalId);
         bridge.captureAccount(sessionJson);
-        if ((!name.isEmpty() || !email.isEmpty())) db.updateAccountIdentity(finalId, name, email);
+        if (!name.isEmpty() || !email.isEmpty()) db.updateAccountIdentity(finalId, name, email);
         db.setActiveAccount(finalId);
 
         if (newAccount && finalId != targetId) db.deleteAccount(targetId);
@@ -165,7 +163,9 @@ public final class ChatGptAuthActivity extends Activity {
             if (a.id == keepId || a.active) continue;
             boolean noIdentity = a.email == null || a.email.trim().isEmpty();
             boolean defaultName = "Аккаунт 1".equals(a.label) || "Новый аккаунт".equals(a.label);
-            if (noIdentity && !a.hasSession() && db.countAll(a.id) == 0 && defaultName) db.deleteAccount(a.id);
+            // Old builds could save anonymous login-page cookies into a placeholder.
+            // Delete such rows once a real account exists.
+            if (noIdentity && db.countAll(a.id) == 0 && defaultName) db.deleteAccount(a.id);
         }
     }
 
@@ -207,13 +207,9 @@ public final class ChatGptAuthActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
-        // During OAuth, Back navigates inside the embedded flow first. When there
-        // is nowhere left to go, cancel without registering the pending account.
-        if (web != null && web.canGoBack()) web.goBack();
-        else {
-            cancelAuthorization();
-            super.onBackPressed();
-        }
+        // Back always cancels account addition. No half-created account survives.
+        cancelAuthorization();
+        super.onBackPressed();
     }
 
     @Override protected void onDestroy() {
