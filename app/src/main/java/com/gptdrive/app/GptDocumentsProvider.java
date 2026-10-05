@@ -8,6 +8,7 @@ import android.os.CancellationSignal;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsProvider;
+import android.util.Base64;
 
 import java.io.FileNotFoundException;
 import java.io.OutputStream;
@@ -16,7 +17,7 @@ import java.util.HashSet;
 
 public final class GptDocumentsProvider extends DocumentsProvider {
     private static final String ROOT = "gptdrive";
-    private static final String[] CATS = {"Library", "Images", "Projects", "Archived"};
+    private static final String[] CATS = {"Library", "Images", "Projects", "Archived", "Chat Mirror"};
     private static final int MAX_RESULTS = 10000;
     private DriveDb db;
     private DocumentsIndex index;
@@ -72,6 +73,13 @@ public final class GptDocumentsProvider extends DocumentsProvider {
                 for (DocumentsIndex.ConversationDoc x : index.archived(d.accountId, MAX_RESULTS)) addConversation(c, x);
                 return c;
             }
+            if ("Chat Mirror".equals(d.category)) {
+                ChatMirrorRepository mirror = new ChatMirrorRepository(getContext(), db, d.accountId);
+                for (ChatMirrorRepository.Entry x : mirror.listEntries(MAX_RESULTS)) {
+                    if (x.hasSnapshot) addMirror(c, d.accountId, x);
+                }
+                return c;
+            }
             for (DriveItem x : db.listFiles(d.accountId, d.category, MAX_RESULTS)) addFile(c, x);
             return c;
         }
@@ -98,10 +106,27 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         for (DocumentsIndex.ConversationDoc x : index.archived(accountId, MAX_RESULTS)) {
             if (x.title.toLowerCase().contains(q)) addConversation(c, x);
         }
+        ChatMirrorRepository mirror = new ChatMirrorRepository(getContext(), db, accountId);
+        for (ChatMirrorRepository.Entry x : mirror.listEntries(MAX_RESULTS)) {
+            if (x.hasSnapshot && x.title.toLowerCase().contains(q)) addMirror(c, accountId, x);
+        }
         return c;
     }
 
     @Override public ParcelFileDescriptor openDocument(String documentId, String mode, CancellationSignal signal) throws FileNotFoundException {
+        if (documentId.startsWith("chat:")) {
+            ChatRef ref = parseChat(documentId);
+            ChatMirrorRepository mirror = new ChatMirrorRepository(getContext(), db, ref.accountId);
+            ChatMirrorRepository.Entry entry = mirror.entry(ref.conversationId);
+            if (entry == null || !entry.hasSnapshot) throw new FileNotFoundException(documentId);
+            try {
+                ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
+                new Thread(() -> streamMirror(mirror, ref.conversationId, pipe[1]), "gptdrive-chat-mirror").start();
+                return pipe[0];
+            } catch (Exception e) {
+                throw new FileNotFoundException(e.getMessage());
+            }
+        }
         if (documentId.startsWith("conv:")) {
             PairRef ref = parsePair(documentId, "conv:");
             DocumentsIndex.ConversationDoc conversation = index.conversation(ref.accountId, ref.rowId);
@@ -157,6 +182,16 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         }
     }
 
+    private void streamMirror(ChatMirrorRepository mirror, String conversationId, ParcelFileDescriptor writeSide) {
+        try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(writeSide)) {
+            String raw = mirror.readRaw(conversationId);
+            if (raw == null || raw.isEmpty()) throw new FileNotFoundException(conversationId);
+            out.write(raw.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
+            try { writeSide.close(); } catch (Exception ignored2) {}
+        }
+    }
+
     private void streamConversation(DocumentsIndex.ConversationDoc conversation, ParcelFileDescriptor writeSide) {
         try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(writeSide)) {
             out.write((conversation.chatUrl() + "\n").getBytes(StandardCharsets.UTF_8));
@@ -192,6 +227,13 @@ public final class GptDocumentsProvider extends DocumentsProvider {
             addConversation(c, x);
             return;
         }
+        if (id.startsWith("chat:")) {
+            ChatRef ref = parseChat(id);
+            ChatMirrorRepository.Entry x = new ChatMirrorRepository(getContext(), db, ref.accountId).entry(ref.conversationId);
+            if (x == null || !x.hasSnapshot) throw new FileNotFoundException(id);
+            addMirror(c, ref.accountId, x);
+            return;
+        }
         addFile(c, resolveFile(id));
     }
 
@@ -207,6 +249,18 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         r.add(DocumentsContract.Document.COLUMN_FLAGS, 0);
         r.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, x.updated);
         r.add(DocumentsContract.Document.COLUMN_SIZE, x.chatUrl().getBytes(StandardCharsets.UTF_8).length + 1);
+    }
+
+    private void addMirror(MatrixCursor c, long accountId, ChatMirrorRepository.Entry x) {
+        MatrixCursor.RowBuilder r = c.newRow();
+        r.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, chatDocId(accountId, x.conversationId));
+        String name = x.displayName();
+        if (!x.remotePresent) name = "[local] " + name;
+        r.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, name);
+        r.add(DocumentsContract.Document.COLUMN_MIME_TYPE, "application/json");
+        r.add(DocumentsContract.Document.COLUMN_FLAGS, 0);
+        long updated = x.mirroredAt > 0 ? x.mirroredAt : x.updatedAt;
+        r.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, updated);
     }
 
     private void addDir(MatrixCursor c, String id, String name, long updated) {
@@ -233,6 +287,10 @@ public final class GptDocumentsProvider extends DocumentsProvider {
     private static String dirId(long accountId, String category) { return "dir:" + accountId + ":" + category; }
     private static String projectDocId(long accountId, long rowId) { return "project:" + accountId + ":" + rowId; }
     private static String conversationDocId(long accountId, long rowId) { return "conv:" + accountId + ":" + rowId; }
+    private static String chatDocId(long accountId, String conversationId) {
+        String token = Base64.encodeToString(conversationId.getBytes(StandardCharsets.UTF_8), Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
+        return "chat:" + accountId + ":" + token;
+    }
 
     private static long parseLongAfter(String value, String prefix) throws FileNotFoundException {
         if (value == null || !value.startsWith(prefix)) throw new FileNotFoundException(value);
@@ -247,6 +305,20 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         if (cut <= 0 || cut >= rest.length() - 1) throw new FileNotFoundException(value);
         try {
             return new PairRef(Long.parseLong(rest.substring(0, cut)), Long.parseLong(rest.substring(cut + 1)));
+        } catch (Exception e) { throw new FileNotFoundException(value); }
+    }
+
+    private static ChatRef parseChat(String value) throws FileNotFoundException {
+        if (value == null || !value.startsWith("chat:")) throw new FileNotFoundException(value);
+        String rest = value.substring(5);
+        int cut = rest.indexOf(':');
+        if (cut <= 0 || cut >= rest.length() - 1) throw new FileNotFoundException(value);
+        try {
+            long accountId = Long.parseLong(rest.substring(0, cut));
+            byte[] decoded = Base64.decode(rest.substring(cut + 1), Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
+            String conversationId = new String(decoded, StandardCharsets.UTF_8);
+            if (conversationId.trim().isEmpty()) throw new IllegalArgumentException();
+            return new ChatRef(accountId, conversationId);
         } catch (Exception e) { throw new FileNotFoundException(value); }
     }
 
@@ -265,6 +337,12 @@ public final class GptDocumentsProvider extends DocumentsProvider {
     private static final class PairRef {
         final long accountId, rowId;
         PairRef(long accountId, long rowId) { this.accountId = accountId; this.rowId = rowId; }
+    }
+
+    private static final class ChatRef {
+        final long accountId;
+        final String conversationId;
+        ChatRef(long accountId, String conversationId) { this.accountId = accountId; this.conversationId = conversationId; }
     }
 
     private static final class DirRef {
