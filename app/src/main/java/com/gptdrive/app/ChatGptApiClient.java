@@ -13,14 +13,22 @@ final class ChatGptApiClient {
     static final class SyncResult {
         final int library, images, projects, archived, pages;
         final int libraryStrategy;
-        SyncResult(int library, int images, int projects, int archived, int pages, int libraryStrategy) {
+        final boolean imagesFresh, projectsFresh, archivedFresh;
+
+        SyncResult(int library, int images, int projects, int archived, int pages, int libraryStrategy,
+                   boolean imagesFresh, boolean projectsFresh, boolean archivedFresh) {
             this.library = library;
             this.images = images;
             this.projects = projects;
             this.archived = archived;
             this.pages = pages;
             this.libraryStrategy = libraryStrategy;
+            this.imagesFresh = imagesFresh;
+            this.projectsFresh = projectsFresh;
+            this.archivedFresh = archivedFresh;
         }
+
+        boolean fullyFresh() { return imagesFresh && projectsFresh && archivedFresh; }
     }
 
     static final class AuthException extends Exception { AuthException(String message) { super(message); } }
@@ -45,7 +53,8 @@ final class ChatGptApiClient {
         try {
             ChatGptSyncCoordinator.Result r = new ChatGptSyncCoordinator(db, localAccountId, provider).sync(
                     progress == null ? null : progress::onProgress);
-            return new SyncResult(r.library, r.images, r.projects, r.archived, r.pages, r.libraryStrategy);
+            return new SyncResult(r.library, r.images, r.projects, r.archived, r.pages, r.libraryStrategy,
+                    r.imagesFresh, r.projectsFresh, r.archivedFresh);
         } catch (ChatGptProvider.AuthException e) {
             throw new AuthException(e.getMessage());
         }
