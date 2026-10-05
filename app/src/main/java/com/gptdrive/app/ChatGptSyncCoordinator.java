@@ -22,9 +22,13 @@ final class ChatGptSyncCoordinator {
     private final DriveDb db;
     private final long accountId;
     private final ChatGptProvider provider;
+    private final NormalizedIndexRepository index;
 
     ChatGptSyncCoordinator(DriveDb db, long accountId, ChatGptProvider provider) {
-        this.db = db; this.accountId = accountId; this.provider = provider;
+        this.db = db;
+        this.accountId = accountId;
+        this.provider = provider;
+        this.index = new NormalizedIndexRepository(db, accountId);
     }
 
     Result sync(ChatGptProvider.Progress progress) throws Exception {
@@ -45,7 +49,9 @@ final class ChatGptSyncCoordinator {
         } catch (ChatGptProvider.AuthException e) {
             db.recordSyncState(accountId, "Images", false, 0, message(e), "");
             throw e;
-        } catch (Exception e) { imageError = message(e); }
+        } catch (Exception e) {
+            imageError = message(e);
+        }
 
         List<ChatGptModels.RemoteProject> projects = null;
         boolean projectsFresh = false;
@@ -58,16 +64,22 @@ final class ChatGptSyncCoordinator {
         } catch (ChatGptProvider.AuthException e) {
             db.recordSyncState(accountId, "Projects", false, 0, message(e), "");
             throw e;
-        } catch (Exception e) { projectError = message(e); }
+        } catch (Exception e) {
+            projectError = message(e);
+        }
 
         List<ChatGptModels.RemoteConversation> archived = null;
         boolean archivedFresh = false;
         String archiveError = "";
-        try { archived = provider.loadArchived(); archivedFresh = true; }
-        catch (ChatGptProvider.AuthException e) {
+        try {
+            archived = provider.loadArchived();
+            archivedFresh = true;
+        } catch (ChatGptProvider.AuthException e) {
             db.recordSyncState(accountId, "Archived", false, 0, message(e), "");
             throw e;
-        } catch (Exception e) { archiveError = message(e); }
+        } catch (Exception e) {
+            archiveError = message(e);
+        }
 
         ArrayList<ChatGptModels.RemoteFile> allFiles = new ArrayList<>(files.values());
         int imageCount = 0;
@@ -76,53 +88,45 @@ final class ChatGptSyncCoordinator {
         SQLiteDatabase sql = db.getWritableDatabase();
         sql.beginTransaction();
         try {
-            db.replaceRemoteFiles(sql, accountId, allFiles);
-            if (projects != null) {
-                db.replaceProjectsNormalized(sql, accountId, projects);
-                replaceProjectLinks(sql, projects);
-            }
-            if (archived != null) {
-                db.replaceConversationsNormalized(sql, accountId, archived);
-                replaceArchivedLinks(sql, archived);
-            }
+            // Library is authoritative and is replaced only after the complete remote snapshot exists.
+            // Stable file row ids are preserved so open DocumentsProvider handles do not break.
+            index.replaceFiles(sql, allFiles);
+
+            // Sub-surfaces commit only when their own fetch succeeded. A temporary endpoint failure
+            // therefore cannot zero a previously valid Projects/Archive index.
+            if (projectsFresh) index.replaceProjects(sql, projects);
+            if (archivedFresh) index.replaceArchived(sql, archived);
             sql.setTransactionSuccessful();
-        } finally { sql.endTransaction(); }
+        } finally {
+            sql.endTransaction();
+        }
 
         db.pruneFalsePositives(accountId);
         IndexMaintenance.pruneTransientSignedUrls(db, accountId);
         db.markSynced(accountId);
+
         db.recordSyncState(accountId, "Library", true, allFiles.size(), "",
                 "pages=" + library.pages + ";strategy=" + library.strategy);
-        db.recordSyncState(accountId, "Images", imagesFresh, imageCount, imageError, "");
-        int projectCount = projects == null ? (int) db.count(accountId, "Projects") : projects.size();
-        db.recordSyncState(accountId, "Projects", projectsFresh, projectCount, projectError, "");
-        int archivedCount = archived == null ? (int) db.count(accountId, "Archived") : archived.size();
-        db.recordSyncState(accountId, "Archived", archivedFresh, archivedCount, archiveError, "");
+        db.recordSyncState(accountId, "Images", imagesFresh, imageCount, imageError,
+                imagesFresh ? "merged=file_id" : "preserved_from_library=true");
+
+        int projectCount = projectsFresh && projects != null
+                ? projects.size() : (int) db.count(accountId, "Projects");
+        db.recordSyncState(accountId, "Projects", projectsFresh, projectCount, projectError,
+                projectsFresh ? "relations=project_files" : "previous_snapshot_preserved=true");
+
+        int archivedCount = archivedFresh && archived != null
+                ? archived.size() : (int) db.count(accountId, "Archived");
+        db.recordSyncState(accountId, "Archived", archivedFresh, archivedCount, archiveError,
+                archivedFresh ? "table=conversations" : "previous_snapshot_preserved=true");
 
         return new Result(allFiles.size(), imageCount, projectCount, archivedCount,
                 library.pages, library.strategy, imagesFresh, projectsFresh, archivedFresh);
     }
 
-    private void replaceProjectLinks(SQLiteDatabase sql, List<ChatGptModels.RemoteProject> projects) {
-        sql.delete("items", "account_id=? AND category=?", new String[]{Long.toString(accountId), "Projects"});
-        for (ChatGptModels.RemoteProject p : projects) {
-            if (p == null || p.id == null || p.id.trim().isEmpty()) continue;
-            db.upsert(accountId, "Projects", ChatGptResponseParser.cleanName(p.name),
-                    "https://chatgpt.com/g/" + p.id.trim(), DriveActions.LINK_MIME, 0);
-        }
-    }
-
-    private void replaceArchivedLinks(SQLiteDatabase sql, List<ChatGptModels.RemoteConversation> archived) {
-        sql.delete("items", "account_id=? AND category=?", new String[]{Long.toString(accountId), "Archived"});
-        for (ChatGptModels.RemoteConversation c : archived) {
-            if (c == null || c.id == null || c.id.trim().isEmpty()) continue;
-            db.upsert(accountId, "Archived", ChatGptResponseParser.cleanName(c.title),
-                    "https://chatgpt.com/c/" + c.id.trim(), DriveActions.LINK_MIME, 0);
-        }
-    }
-
     private static String message(Throwable e) {
-        if (e == null || e.getMessage() == null || e.getMessage().trim().isEmpty()) return e == null ? "" : e.getClass().getSimpleName();
+        if (e == null) return "";
+        if (e.getMessage() == null || e.getMessage().trim().isEmpty()) return e.getClass().getSimpleName();
         return e.getMessage().trim();
     }
 }
