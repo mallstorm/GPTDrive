@@ -12,20 +12,27 @@ final class ChatGptApiClient {
 
     static final class SyncResult {
         final int library, images, projects, archived, pages;
+        final int conversations, mirroredChats, mirrorPending, mirrorMissing;
         final int libraryStrategy;
-        final boolean imagesFresh, projectsFresh, archivedFresh;
+        final boolean imagesFresh, projectsFresh, archivedFresh, mirrorFresh;
 
         SyncResult(int library, int images, int projects, int archived, int pages, int libraryStrategy,
-                   boolean imagesFresh, boolean projectsFresh, boolean archivedFresh) {
+                   int conversations, int mirroredChats, int mirrorPending, int mirrorMissing,
+                   boolean imagesFresh, boolean projectsFresh, boolean archivedFresh, boolean mirrorFresh) {
             this.library = library;
             this.images = images;
             this.projects = projects;
             this.archived = archived;
             this.pages = pages;
             this.libraryStrategy = libraryStrategy;
+            this.conversations = conversations;
+            this.mirroredChats = mirroredChats;
+            this.mirrorPending = mirrorPending;
+            this.mirrorMissing = mirrorMissing;
             this.imagesFresh = imagesFresh;
             this.projectsFresh = projectsFresh;
             this.archivedFresh = archivedFresh;
+            this.mirrorFresh = mirrorFresh;
         }
 
         boolean fullyFresh() { return imagesFresh && projectsFresh && archivedFresh; }
@@ -35,15 +42,17 @@ final class ChatGptApiClient {
 
     private static final Pattern FILE_ID = Pattern.compile("(file[-_][A-Za-z0-9_-]{6,})", Pattern.CASE_INSENSITIVE);
 
+    private final Context context;
     private final DriveDb db;
     private final long localAccountId;
     private final ChatGptProvider provider;
 
     ChatGptApiClient(Context context, DriveDb db, long localAccountId) throws AuthException {
+        this.context = context.getApplicationContext();
         this.db = db;
         this.localAccountId = localAccountId;
         try {
-            this.provider = new ChatGptProvider(context, localAccountId);
+            this.provider = new ChatGptProvider(this.context, localAccountId);
         } catch (ChatGptProvider.AuthException e) {
             throw new AuthException(e.getMessage());
         }
@@ -51,10 +60,11 @@ final class ChatGptApiClient {
 
     SyncResult sync(Progress progress) throws Exception {
         try {
-            ChatGptSyncCoordinator.Result r = new ChatGptSyncCoordinator(db, localAccountId, provider).sync(
+            ChatGptSyncCoordinator.Result r = new ChatGptSyncCoordinator(context, db, localAccountId, provider).sync(
                     progress == null ? null : progress::onProgress);
             return new SyncResult(r.library, r.images, r.projects, r.archived, r.pages, r.libraryStrategy,
-                    r.imagesFresh, r.projectsFresh, r.archivedFresh);
+                    r.conversations, r.mirroredChats, r.mirrorPending, r.mirrorMissing,
+                    r.imagesFresh, r.projectsFresh, r.archivedFresh, r.mirrorFresh);
         } catch (ChatGptProvider.AuthException e) {
             throw new AuthException(e.getMessage());
         }
