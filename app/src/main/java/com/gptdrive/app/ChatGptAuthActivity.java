@@ -26,6 +26,8 @@ public final class ChatGptAuthActivity extends Activity {
     public static final int MAX_ACCOUNTS = 20;
     private static final String AUTHORITY = "com.gptdrive.app.documents";
     private static final String CHATGPT = "https://chatgpt.com";
+    private static final String HOME = "https://chatgpt.com/";
+    private static final String LOGIN = "https://chatgpt.com/auth/login";
     private static final String SESSION = "https://chatgpt.com/api/auth/session";
     private static final String AUTH = "https://auth.openai.com";
     private static final String FILES = "https://files.oaiusercontent.com";
@@ -85,11 +87,21 @@ public final class ChatGptAuthActivity extends Activity {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
                 String u = url == null ? "" : url.toLowerCase(Locale.ROOT);
+
+                // Never leave the user parked on raw /api/auth/session JSON.
+                // If an old navigation path lands there, read it once and return
+                // to the normal ChatGPT page while the bridge decides whether a
+                // real authenticated session exists.
                 if (u.contains("chatgpt.com/api/auth/session")) {
                     captureSessionDocument();
+                    handler.postDelayed(() -> {
+                        if (!authorized && !closing && web != null && !isFinishing()) web.loadUrl(HOME);
+                    }, 120);
                     return;
                 }
+
                 if (u.contains("chatgpt.com")) {
+                    if (!u.contains("/auth/login")) loginOpened = false;
                     checkSessionSoon(150);
                     checkSessionSoon(700);
                     checkSessionSoon(1600);
@@ -127,23 +139,26 @@ public final class ChatGptAuthActivity extends Activity {
         openLoginPreservingSession();
     }
 
-    /** Probe /api/auth/session directly so a valid existing WebView session is picked up immediately. */
+    /**
+     * Probe from a normal ChatGPT page instead of navigating the WebView to
+     * /api/auth/session. The session JSON is fetched invisibly by JavaScript.
+     */
     private void probeSession() {
         if (authorized || closing || web == null || isFinishing()) return;
         loginOpened = false;
-        web.loadUrl(SESSION);
+        web.loadUrl(HOME);
         handler.postDelayed(() -> {
             if (!authorized && !decisionOpen && !freshStarted && !loginOpened) {
                 openLoginPreservingSession();
             }
-        }, 8000);
+        }, 5000);
     }
 
     /** Do not erase cookies on an automatic fallback. */
     private void openLoginPreservingSession() {
         if (authorized || closing || web == null || isFinishing() || loginOpened) return;
         loginOpened = true;
-        web.loadUrl("https://chatgpt.com/auth/login");
+        web.loadUrl(LOGIN);
     }
 
     /** Only an explicit request for another account is allowed to clear the current cookie jar. */
@@ -153,7 +168,7 @@ public final class ChatGptAuthActivity extends Activity {
         decisionOpen = false;
         loginOpened = true;
         AccountSession.startFresh(this, targetId, () -> {
-            if (!isFinishing() && web != null) web.loadUrl("https://chatgpt.com/auth/login");
+            if (!isFinishing() && web != null) web.loadUrl(LOGIN);
         });
     }
 
@@ -162,16 +177,14 @@ public final class ChatGptAuthActivity extends Activity {
         String js = "(function(){try{var t=(document.body&&document.body.innerText)||document.documentElement.innerText||'';" +
                 "if(t){GPTDriveAuth.onSession(t)}}catch(e){}})();";
         web.evaluateJavascript(js, null);
-        // Some WebView builds wrap JSON in a viewer. A same-origin fetch is the
-        // secondary path and uses the exact same live cookie jar.
-        checkSessionSoon(100);
-        checkSessionSoon(500);
     }
 
     private void checkSessionSoon(long delayMs) {
         handler.postDelayed(() -> {
             if (authorized || closing || web == null) return;
-            String js = "(function(){try{fetch('https://chatgpt.com/api/auth/session',{credentials:'include'})" +
+            String current = web.getUrl();
+            if (current == null || !current.toLowerCase(Locale.ROOT).contains("chatgpt.com")) return;
+            String js = "(function(){try{fetch('" + SESSION + "',{credentials:'include',cache:'no-store'})" +
                     ".then(r=>r.text()).then(t=>{try{GPTDriveAuth.onSession(t)}catch(e){}}).catch(()=>{});}catch(e){}})();";
             web.evaluateJavascript(js, null);
         }, delayMs);
@@ -186,9 +199,24 @@ public final class ChatGptAuthActivity extends Activity {
                 JSONObject user = root.optJSONObject("user");
                 String email = user == null ? "" : user.optString("email", "").trim();
                 String name = user == null ? "" : user.optString("name", "").trim();
-                String accessToken = root.optString("accessToken", "").trim();
-                if (email.isEmpty() && accessToken.isEmpty()) return;
+                String accessToken = root.optString("accessToken", root.optString("access_token", "")).trim();
+
+                if (email.isEmpty() && accessToken.isEmpty()) {
+                    boolean warningOnly = root.has("WARNING_BANNER");
+                    if (warningOnly) {
+                        runOnUiThread(() -> {
+                            if (authorized || closing || decisionOpen || freshStarted) return;
+                            // WARNING_BANNER by itself is an unauthenticated session
+                            // response. Move straight into the login page instead of
+                            // leaving the raw warning JSON visible forever.
+                            openLoginPreservingSession();
+                        });
+                    }
+                    return;
+                }
+
                 runOnUiThread(() -> {
+                    loginOpened = false;
                     if (newAccount && !freshStarted) showQuickAccountChoice(raw, name, email);
                     else { authorized = true; completeAuthorization(raw, name, email); }
                 });
