@@ -12,13 +12,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** Android transport. Smart DNS is deliberately below the ChatGPT provider layer. */
+/** Android transport. Smart DNS and retry policy live below the ChatGPT provider. */
 final class AndroidHttpTransport implements HttpTransport {
     private final Context context;
 
-    AndroidHttpTransport(Context context) {
-        this.context = context.getApplicationContext();
-    }
+    AndroidHttpTransport(Context context) { this.context = context.getApplicationContext(); }
 
     @Override public HttpResponse execute(HttpRequest request) throws Exception {
         Exception last = null;
@@ -30,6 +28,7 @@ final class AndroidHttpTransport implements HttpTransport {
                 sleepBackoff(attempt, r.header("retry-after"));
             } catch (Exception e) {
                 last = e;
+                DiagnosticsState.recordError("Network", e.getMessage());
                 if (!request.retryable || attempt + 1 >= attempts) throw e;
                 sleepBackoff(attempt, "");
             }
@@ -39,6 +38,7 @@ final class AndroidHttpTransport implements HttpTransport {
     }
 
     private HttpResponse executeOnce(HttpRequest r) throws Exception {
+        long started = System.nanoTime();
         HttpURLConnection h = (HttpURLConnection) new URL(r.url).openConnection(SmartDnsProxy.proxy(context));
         h.setRequestMethod(r.method);
         h.setConnectTimeout(r.connectTimeoutMs > 0 ? r.connectTimeoutMs : 15000);
@@ -62,12 +62,12 @@ final class AndroidHttpTransport implements HttpTransport {
         }
         String finalUrl = h.getURL() == null ? r.url : h.getURL().toString();
         h.disconnect();
+        long duration = Math.max(0, (System.nanoTime() - started) / 1_000_000L);
+        DiagnosticsState.recordHttp(r.method, r.url, code, duration);
         return new HttpResponse(code, body, headers, finalUrl);
     }
 
-    private static boolean shouldRetry(int code) {
-        return code == 429 || code >= 500;
-    }
+    private static boolean shouldRetry(int code) { return code == 429 || code >= 500; }
 
     private static void sleepBackoff(int attempt, String retryAfter) {
         long ms = Math.min(8000L, 700L * (1L << Math.max(0, attempt)));
@@ -82,17 +82,14 @@ final class AndroidHttpTransport implements HttpTransport {
     private static byte[] read(InputStream in, int limit) throws Exception {
         if (in == null) return new byte[0];
         try (InputStream input = in; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            byte[] buf = new byte[8192];
-            int total = 0;
-            int n;
+            byte[] buf = new byte[8192]; int total = 0; int n;
             while ((n = input.read(buf)) != -1) {
                 if (total + n > limit) {
                     int allowed = Math.max(0, limit - total);
                     if (allowed > 0) out.write(buf, 0, allowed);
                     break;
                 }
-                out.write(buf, 0, n);
-                total += n;
+                out.write(buf, 0, n); total += n;
             }
             return out.toByteArray();
         }
