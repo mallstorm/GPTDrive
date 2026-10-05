@@ -10,13 +10,18 @@ import java.util.List;
 final class ChatGptSyncCoordinator {
     static final class Result {
         final int library, images, projects, archived, pages, libraryStrategy;
-        Result(int library, int images, int projects, int archived, int pages, int libraryStrategy) {
+        final boolean imagesFresh, projectsFresh, archivedFresh;
+        Result(int library, int images, int projects, int archived, int pages, int libraryStrategy,
+               boolean imagesFresh, boolean projectsFresh, boolean archivedFresh) {
             this.library = library;
             this.images = images;
             this.projects = projects;
             this.archived = archived;
             this.pages = pages;
             this.libraryStrategy = libraryStrategy;
+            this.imagesFresh = imagesFresh;
+            this.projectsFresh = projectsFresh;
+            this.archivedFresh = archivedFresh;
         }
     }
 
@@ -31,27 +36,43 @@ final class ChatGptSyncCoordinator {
     }
 
     Result sync(ChatGptProvider.Progress progress) throws Exception {
+        // Never mutate the local index until the authoritative Library snapshot is complete.
         ChatGptModels.LibrarySnapshot library = provider.loadLibrary(250, progress);
         LinkedHashMap<String, ChatGptModels.RemoteFile> files = ChatGptModels.map(library.files);
 
-        boolean imagesOk = true;
+        boolean imagesFresh = false;
         try {
             for (ChatGptModels.RemoteFile f : provider.loadImages(progress)) ChatGptModels.merge(files, f);
-        } catch (Exception e) {
-            if (e instanceof ChatGptProvider.AuthException) imagesOk = false;
-            else imagesOk = false;
+            imagesFresh = true;
+        } catch (ChatGptProvider.AuthException e) {
+            throw e;
+        } catch (Exception ignored) {
+            // Library images remain available; image_gen metadata can recover next sync.
         }
 
         List<ChatGptModels.RemoteProject> projects = null;
+        boolean projectsFresh = false;
         try {
             projects = provider.loadProjects();
             for (ChatGptModels.RemoteProject p : projects)
                 for (ChatGptModels.RemoteFile f : p.files) ChatGptModels.merge(files, f);
-        } catch (Exception ignored) {}
+            projectsFresh = true;
+        } catch (ChatGptProvider.AuthException e) {
+            throw e;
+        } catch (Exception ignored) {
+            // Preserve the previous Projects surface rather than replacing it with zero.
+        }
 
         List<ChatGptModels.RemoteConversation> archived = null;
-        try { archived = provider.loadArchived(); }
-        catch (Exception ignored) {}
+        boolean archivedFresh = false;
+        try {
+            archived = provider.loadArchived();
+            archivedFresh = true;
+        } catch (ChatGptProvider.AuthException e) {
+            throw e;
+        } catch (Exception ignored) {
+            // Preserve previous Archive on a subsystem-only failure.
+        }
 
         ArrayList<ChatGptModels.RemoteFile> allFiles = new ArrayList<>(files.values());
         ArrayList<ChatGptModels.RemoteFile> imageFiles = new ArrayList<>();
@@ -61,7 +82,8 @@ final class ChatGptSyncCoordinator {
         sql.beginTransaction();
         try {
             replaceFileCategory(sql, "Library", allFiles);
-            // Even if image_gen temporarily failed, Library image metadata still provides a useful Images surface.
+            // Images is a view of the unified file identities. If image_gen failed,
+            // image files discovered by Library still remain visible.
             replaceFileCategory(sql, "Images", imageFiles);
             if (projects != null) replaceProjects(sql, projects);
             if (archived != null) replaceArchived(sql, archived);
@@ -76,7 +98,7 @@ final class ChatGptSyncCoordinator {
         int projectCount = projects == null ? (int) db.count(accountId, "Projects") : projects.size();
         int archivedCount = archived == null ? (int) db.count(accountId, "Archived") : archived.size();
         return new Result(allFiles.size(), imageFiles.size(), projectCount, archivedCount,
-                library.pages, library.strategy);
+                library.pages, library.strategy, imagesFresh, projectsFresh, archivedFresh);
     }
 
     private void replaceFileCategory(SQLiteDatabase sql, String category, List<ChatGptModels.RemoteFile> entries) {
