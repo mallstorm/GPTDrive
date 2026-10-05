@@ -9,11 +9,9 @@ import org.json.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 /** ChatGPT backend provider. No SQLite and no DNS policy lives here. */
 final class ChatGptProvider {
@@ -26,7 +24,6 @@ final class ChatGptProvider {
     static final class SchemaException extends ProviderException { SchemaException(String m) { super(m); } }
 
     private static final String BASE = "https://chatgpt.com";
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.8.0";
 
     private final Context context;
     private final long accountId;
@@ -44,86 +41,19 @@ final class ChatGptProvider {
     int lastLibraryStrategy() { return lastLibraryStrategy; }
 
     ChatGptModels.LibrarySnapshot loadLibrary(int maxPages, Progress progress) throws Exception {
-        if (maxPages <= 0) maxPages = 1;
-        LinkedHashMap<String, ChatGptModels.RemoteFile> merged = new LinkedHashMap<>();
-        Set<String> seenCursors = new LinkedHashSet<>();
-        int strategy = -1;
-        String cursor = "";
-        int pages = 0;
-        ChatGptModels.LibraryPageMeta lastMeta = new ChatGptModels.LibraryPageMeta();
-        PageRequest request = new PageRequest("/backend-api/files/library", "{}");
-
-        while (pages < maxPages) {
-            HttpResponse response = backend("POST", request.endpoint, request.payload, true, true);
-            ensureLibraryStatus(response);
-            ChatGptModels.LibraryPage page = ChatGptResponseParser.decodeLibraryPage(response.bodyUtf8());
-            pages++;
-            int before = merged.size();
-            for (ChatGptModels.RemoteFile f : page.files) ChatGptModels.merge(merged, f);
-            int added = merged.size() - before;
-            lastMeta = page.meta;
-            if (progress != null) progress.onProgress("Файлы", 1, 4, merged.size());
-
-            if (pages >= maxPages || (!page.meta.hasMore && page.meta.nextCursor.isEmpty())) break;
-            String next = page.meta.nextCursor;
-            if (next.isEmpty()) {
-                strategy = 5;
-                request = requestForStrategy(strategy, "", merged.size());
-                continue;
-            }
-            if (seenCursors.contains(next)) throw new PaginationException("Library cursor зациклился");
-            seenCursors.add(next);
-
-            if (strategy >= 0) {
-                cursor = next;
-                request = requestForStrategy(strategy, cursor, merged.size());
-                continue;
-            }
-
-            boolean accepted = false;
-            for (int candidate = 0; candidate <= 4; candidate++) {
-                PageRequest probe = requestForStrategy(candidate, next, merged.size());
-                HttpResponse r2;
-                try { r2 = backend("POST", probe.endpoint, probe.payload, true, true); }
-                catch (Exception e) { continue; }
-                if (r2.code != 200) continue;
-                ChatGptModels.LibraryPage p2 = ChatGptResponseParser.decodeLibraryPage(r2.bodyUtf8());
-                int newCount = 0;
-                for (ChatGptModels.RemoteFile f : p2.files) {
-                    String id = f.identity();
-                    if (!id.isEmpty() && !merged.containsKey(id)) newCount++;
-                }
-                boolean progressed = newCount > 0 || !p2.meta.nextCursor.equals(next) ||
-                        (!p2.meta.hasMore && p2.meta.nextCursor.isEmpty());
-                if (!progressed) continue;
-
-                strategy = candidate;
-                lastLibraryStrategy = candidate;
-                cursor = p2.meta.nextCursor;
-                pages++;
-                for (ChatGptModels.RemoteFile f : p2.files) ChatGptModels.merge(merged, f);
-                lastMeta = p2.meta;
-                if (progress != null) progress.onProgress("Файлы", 1, 4, merged.size());
-                accepted = true;
-                if (pages >= maxPages || (!p2.meta.hasMore && p2.meta.nextCursor.isEmpty())) {
-                    request = null;
-                } else {
-                    if (cursor.isEmpty()) strategy = 5;
-                    request = requestForStrategy(strategy, cursor, merged.size());
-                }
-                break;
-            }
-            if (!accepted) {
-                strategy = 5;
-                lastLibraryStrategy = 5;
-                request = requestForStrategy(strategy, "", merged.size());
-            }
-            if (request == null) break;
-            if (added == 0 && strategy == 5 && pages > 2)
-                throw new PaginationException("Library backend повторяет одну и ту же страницу");
+        try {
+            LibraryPaginationEngine.Result result = LibraryPaginationEngine.load(
+                    request -> backend("POST", request.endpoint, request.payload, true, true),
+                    ChatGptProvider::ensureLibraryStatus,
+                    maxPages,
+                    (pages, objects) -> {
+                        if (progress != null) progress.onProgress("Файлы", 1, 4, objects);
+                    });
+            lastLibraryStrategy = result.strategy;
+            return new ChatGptModels.LibrarySnapshot(result.files, result.pages, result.lastMeta, result.strategy);
+        } catch (LibraryPaginationEngine.PaginationFailure e) {
+            throw new PaginationException(e.getMessage());
         }
-        lastLibraryStrategy = strategy;
-        return new ChatGptModels.LibrarySnapshot(new ArrayList<>(merged.values()), pages, lastMeta, strategy);
     }
 
     List<ChatGptModels.RemoteFile> loadImages(Progress progress) throws Exception {
@@ -236,6 +166,8 @@ final class ChatGptProvider {
                 c.id = id;
                 c.title = ChatGptResponseParser.cleanName(ChatGptModels.first(o.optString("title", ""), "ChatGPT chat"));
                 c.archived = true;
+                c.updatedAt = epochMillis(o.opt("update_time"));
+                if (c.updatedAt <= 0) c.updatedAt = epochMillis(o.opt("updated_at"));
                 out.add(c);
             }
             int total = root.optInt("total", root.optInt("total_count", 0));
@@ -287,7 +219,7 @@ final class ChatGptProvider {
         h.put("Origin", BASE);
         h.put("Cache-Control", "no-cache");
         h.put("Pragma", "no-cache");
-        h.put("User-Agent", UA);
+        h.put("User-Agent", AppIdentity.userAgent());
         if (payload != null) h.put("Content-Type", "application/json");
         if (session.accountId != null && !session.accountId.isEmpty()) h.put("chatgpt-account-id", session.accountId);
         String cookie = AccountSession.cookieHeader(context, accountId, BASE);
@@ -308,7 +240,7 @@ final class ChatGptProvider {
         if (bootstrapped) return;
         try {
             Map<String, String> h = new LinkedHashMap<>();
-            h.put("User-Agent", UA);
+            h.put("User-Agent", AppIdentity.userAgent());
             h.put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
             h.put("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8");
             String cookie = AccountSession.cookieHeader(context, accountId, BASE);
@@ -335,32 +267,20 @@ final class ChatGptProvider {
         throw new ProviderException("ChatGPT Library HTTP " + r.code);
     }
 
-    private static PageRequest requestForStrategy(int strategy, String cursor, int offset) {
-        String c = cursor == null ? "" : cursor;
-        try {
-            switch (strategy) {
-                case 0: return new PageRequest("/backend-api/files/library", new JSONObject().put("cursor", c).toString());
-                case 1: return new PageRequest("/backend-api/files/library", new JSONObject().put("cursor", c).put("limit", 100).toString());
-                case 2: return new PageRequest("/backend-api/files/library", new JSONObject().put("after", c).toString());
-                case 3: return new PageRequest("/backend-api/files/library", new JSONObject().put("next_cursor", c).toString());
-                case 4: return new PageRequest("/backend-api/files/library?cursor=" + Uri.encode(c), "{}");
-                case 5: return new PageRequest("/backend-api/files/library", new JSONObject().put("offset", offset).put("limit", 100).toString());
-                default: return new PageRequest("/backend-api/files/library", "{}");
-            }
-        } catch (Exception e) {
-            return new PageRequest("/backend-api/files/library", "{}");
-        }
-    }
-
     private static boolean isHttp(String value) {
         if (value == null) return false;
         String s = value.toLowerCase(Locale.ROOT);
         return s.startsWith("https://") || s.startsWith("http://");
     }
 
-    private static final class PageRequest {
-        final String endpoint;
-        final String payload;
-        PageRequest(String endpoint, String payload) { this.endpoint = endpoint; this.payload = payload; }
+    private static long epochMillis(Object value) {
+        if (value == null || value == JSONObject.NULL) return 0;
+        try {
+            double n = value instanceof Number ? ((Number) value).doubleValue() : Double.parseDouble(value.toString());
+            if (n <= 0) return 0;
+            return n < 100000000000L ? (long) (n * 1000d) : (long) n;
+        } catch (Exception ignored) {
+            return 0;
+        }
     }
 }
