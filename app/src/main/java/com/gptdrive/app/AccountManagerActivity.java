@@ -182,6 +182,12 @@ public final class AccountManagerActivity extends Activity {
         startActivity(i);
     }
 
+    private void diagnostics(AccountProfile a) {
+        Intent i = new Intent(this, SyncDiagnosticsActivity.class);
+        i.putExtra(SyncDiagnosticsActivity.EXTRA_ACCOUNT_ID, a.id);
+        startActivity(i);
+    }
+
     private void select(AccountProfile a) {
         db.setActiveAccount(a.id); notifyRoots();
         Toast.makeText(this, "Переключено: " + a.displayName(), Toast.LENGTH_SHORT).show(); render();
@@ -205,6 +211,10 @@ public final class AccountManagerActivity extends Activity {
         TextView session = popupAction(ChatGptSessionStore.has(this, a.id) ? "Обновить Session JSON" : "Подключить Library Session");
         panel.addView(session, new LinearLayout.LayoutParams(-1, dp(42)));
         session.setOnClickListener(v -> { w.dismiss(); importSession(a); });
+
+        TextView diag = popupAction("Диагностика");
+        panel.addView(diag, new LinearLayout.LayoutParams(-1, dp(42)));
+        diag.setOnClickListener(v -> { w.dismiss(); diagnostics(a); });
 
         TextView del = popupAction("Удалить аккаунт"); del.setTextColor(0xFFD92D20);
         panel.addView(del, new LinearLayout.LayoutParams(-1, dp(42)));
