@@ -92,7 +92,14 @@ final class ChatGptApiClient {
     static String extractFileIdCompat(String value) {
         if (value == null || value.trim().isEmpty()) return "";
         Matcher m = FILE_ID.matcher(value);
-        return m.find() ? m.group(1) : "";
+        String best = "";
+        while (m.find()) {
+            String candidate = m.group(1);
+            // file-service:// is a transport scheme, not a ChatGPT file identity.
+            if ("file-service".equalsIgnoreCase(candidate)) continue;
+            best = candidate;
+        }
+        return best;
     }
 
     static String extractConversationId(String value) {
