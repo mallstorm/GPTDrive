@@ -8,17 +8,22 @@ import android.os.CancellationSignal;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsProvider;
+
 import java.io.FileNotFoundException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 
 public final class GptDocumentsProvider extends DocumentsProvider {
     private static final String ROOT = "gptdrive";
     private static final String[] CATS = {"Library", "Images", "Projects", "Archived"};
     private static final int MAX_RESULTS = 10000;
     private DriveDb db;
+    private DocumentsIndex index;
 
     @Override public boolean onCreate() {
         db = new DriveDb(getContext());
+        index = new DocumentsIndex(db);
         return true;
     }
 
@@ -54,12 +59,27 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         MatrixCursor c = new MatrixCursor(resolveDocProjection(projection));
         if (parent.startsWith("acct:")) {
             long accountId = parseLongAfter(parent, "acct:");
-            for (String cat : CATS) addDir(c, dirId(accountId, cat), cat);
+            for (String cat : CATS) addDir(c, dirId(accountId, cat), cat, System.currentTimeMillis());
             return c;
         }
         if (parent.startsWith("dir:")) {
             DirRef d = parseDir(parent);
+            if ("Projects".equals(d.category)) {
+                for (DocumentsIndex.ProjectDoc p : index.projects(d.accountId, MAX_RESULTS)) addProject(c, p);
+                return c;
+            }
+            if ("Archived".equals(d.category)) {
+                for (DocumentsIndex.ConversationDoc x : index.archived(d.accountId, MAX_RESULTS)) addConversation(c, x);
+                return c;
+            }
             for (DriveItem x : db.listFiles(d.accountId, d.category, MAX_RESULTS)) addFile(c, x);
+            return c;
+        }
+        if (parent.startsWith("project:")) {
+            PairRef ref = parsePair(parent, "project:");
+            DocumentsIndex.ProjectDoc project = index.project(ref.accountId, ref.rowId);
+            if (project == null) throw new FileNotFoundException(parent);
+            for (DriveItem x : index.projectFiles(ref.accountId, ref.rowId, MAX_RESULTS)) addFile(c, x);
             return c;
         }
         throw new FileNotFoundException(parent);
@@ -70,16 +90,31 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         long accountId = db.activeAccountId();
         String q = query == null ? "" : query.toLowerCase();
         if (accountId <= 0) return c;
-        java.util.HashSet<Long> seen = new java.util.HashSet<>();
-        for (String cat : CATS) {
-            for (DriveItem x : db.listFiles(accountId, cat, MAX_RESULTS)) {
-                if (x.name != null && x.name.toLowerCase().contains(q) && seen.add(x.id)) addFile(c, x);
-            }
+
+        HashSet<Long> seen = new HashSet<>();
+        for (DriveItem x : db.listDistinct(accountId, MAX_RESULTS)) {
+            if (x.name != null && x.name.toLowerCase().contains(q) && seen.add(x.id)) addFile(c, x);
+        }
+        for (DocumentsIndex.ConversationDoc x : index.archived(accountId, MAX_RESULTS)) {
+            if (x.title.toLowerCase().contains(q)) addConversation(c, x);
         }
         return c;
     }
 
     @Override public ParcelFileDescriptor openDocument(String documentId, String mode, CancellationSignal signal) throws FileNotFoundException {
+        if (documentId.startsWith("conv:")) {
+            PairRef ref = parsePair(documentId, "conv:");
+            DocumentsIndex.ConversationDoc conversation = index.conversation(ref.accountId, ref.rowId);
+            if (conversation == null) throw new FileNotFoundException(documentId);
+            try {
+                ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
+                new Thread(() -> streamConversation(conversation, pipe[1]), "gptdrive-conversation-link").start();
+                return pipe[0];
+            } catch (Exception e) {
+                throw new FileNotFoundException(e.getMessage());
+            }
+        }
+
         DriveItem item = resolveFile(documentId);
         try {
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
@@ -122,29 +157,65 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         }
     }
 
+    private void streamConversation(DocumentsIndex.ConversationDoc conversation, ParcelFileDescriptor writeSide) {
+        try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(writeSide)) {
+            out.write((conversation.chatUrl() + "\n").getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
+            try { writeSide.close(); } catch (Exception ignored2) {}
+        }
+    }
+
     private void include(MatrixCursor c, String id) throws FileNotFoundException {
         if (id.startsWith("acct:")) {
             long accountId = parseLongAfter(id, "acct:");
             AccountProfile a = db.accountById(accountId);
             if (a == null) throw new FileNotFoundException(id);
-            addDir(c, id, "GPT Drive");
+            addDir(c, id, "GPT Drive", System.currentTimeMillis());
             return;
         }
         if (id.startsWith("dir:")) {
             DirRef d = parseDir(id);
-            addDir(c, id, d.category);
+            addDir(c, id, d.category, System.currentTimeMillis());
+            return;
+        }
+        if (id.startsWith("project:")) {
+            PairRef ref = parsePair(id, "project:");
+            DocumentsIndex.ProjectDoc p = index.project(ref.accountId, ref.rowId);
+            if (p == null) throw new FileNotFoundException(id);
+            addProject(c, p);
+            return;
+        }
+        if (id.startsWith("conv:")) {
+            PairRef ref = parsePair(id, "conv:");
+            DocumentsIndex.ConversationDoc x = index.conversation(ref.accountId, ref.rowId);
+            if (x == null) throw new FileNotFoundException(id);
+            addConversation(c, x);
             return;
         }
         addFile(c, resolveFile(id));
     }
 
-    private void addDir(MatrixCursor c, String id, String name) {
+    private void addProject(MatrixCursor c, DocumentsIndex.ProjectDoc p) {
+        addDir(c, projectDocId(p.accountId, p.rowId), p.name, p.updated);
+    }
+
+    private void addConversation(MatrixCursor c, DocumentsIndex.ConversationDoc x) {
+        MatrixCursor.RowBuilder r = c.newRow();
+        r.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, conversationDocId(x.accountId, x.rowId));
+        r.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, x.title + ".url");
+        r.add(DocumentsContract.Document.COLUMN_MIME_TYPE, "text/uri-list");
+        r.add(DocumentsContract.Document.COLUMN_FLAGS, 0);
+        r.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, x.updated);
+        r.add(DocumentsContract.Document.COLUMN_SIZE, x.chatUrl().getBytes(StandardCharsets.UTF_8).length + 1);
+    }
+
+    private void addDir(MatrixCursor c, String id, String name, long updated) {
         MatrixCursor.RowBuilder r = c.newRow();
         r.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, id);
         r.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, name);
         r.add(DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.MIME_TYPE_DIR);
         r.add(DocumentsContract.Document.COLUMN_FLAGS, 0);
-        r.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, System.currentTimeMillis());
+        r.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, updated > 0 ? updated : System.currentTimeMillis());
     }
 
     private void addFile(MatrixCursor c, DriveItem x) {
@@ -160,11 +231,23 @@ public final class GptDocumentsProvider extends DocumentsProvider {
 
     private static String accountDocId(long accountId) { return "acct:" + accountId; }
     private static String dirId(long accountId, String category) { return "dir:" + accountId + ":" + category; }
+    private static String projectDocId(long accountId, long rowId) { return "project:" + accountId + ":" + rowId; }
+    private static String conversationDocId(long accountId, long rowId) { return "conv:" + accountId + ":" + rowId; }
 
     private static long parseLongAfter(String value, String prefix) throws FileNotFoundException {
         if (value == null || !value.startsWith(prefix)) throw new FileNotFoundException(value);
         try { return Long.parseLong(value.substring(prefix.length())); }
         catch (Exception e) { throw new FileNotFoundException(value); }
+    }
+
+    private static PairRef parsePair(String value, String prefix) throws FileNotFoundException {
+        if (value == null || !value.startsWith(prefix)) throw new FileNotFoundException(value);
+        String rest = value.substring(prefix.length());
+        int cut = rest.indexOf(':');
+        if (cut <= 0 || cut >= rest.length() - 1) throw new FileNotFoundException(value);
+        try {
+            return new PairRef(Long.parseLong(rest.substring(0, cut)), Long.parseLong(rest.substring(cut + 1)));
+        } catch (Exception e) { throw new FileNotFoundException(value); }
     }
 
     private static DirRef parseDir(String id) throws FileNotFoundException {
@@ -177,6 +260,11 @@ public final class GptDocumentsProvider extends DocumentsProvider {
             String category = rest.substring(cut + 1);
             return new DirRef(accountId, category);
         } catch (Exception e) { throw new FileNotFoundException(id); }
+    }
+
+    private static final class PairRef {
+        final long accountId, rowId;
+        PairRef(long accountId, long rowId) { this.accountId = accountId; this.rowId = rowId; }
     }
 
     private static final class DirRef {
