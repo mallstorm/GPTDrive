@@ -1,5 +1,6 @@
 package com.gptdrive.app;
 
+import android.content.Context;
 import android.database.sqlite.SQLiteDatabase;
 
 import java.util.ArrayList;
@@ -10,21 +11,37 @@ import java.util.List;
 final class ChatGptSyncCoordinator {
     static final class Result {
         final int library, images, projects, archived, pages, libraryStrategy;
-        final boolean imagesFresh, projectsFresh, archivedFresh;
+        final int conversations, mirroredChats, mirrorPending, mirrorMissing;
+        final boolean imagesFresh, projectsFresh, archivedFresh, mirrorFresh;
+
         Result(int library, int images, int projects, int archived, int pages, int libraryStrategy,
-               boolean imagesFresh, boolean projectsFresh, boolean archivedFresh) {
-            this.library = library; this.images = images; this.projects = projects; this.archived = archived;
-            this.pages = pages; this.libraryStrategy = libraryStrategy;
-            this.imagesFresh = imagesFresh; this.projectsFresh = projectsFresh; this.archivedFresh = archivedFresh;
+               int conversations, int mirroredChats, int mirrorPending, int mirrorMissing,
+               boolean imagesFresh, boolean projectsFresh, boolean archivedFresh, boolean mirrorFresh) {
+            this.library = library;
+            this.images = images;
+            this.projects = projects;
+            this.archived = archived;
+            this.pages = pages;
+            this.libraryStrategy = libraryStrategy;
+            this.conversations = conversations;
+            this.mirroredChats = mirroredChats;
+            this.mirrorPending = mirrorPending;
+            this.mirrorMissing = mirrorMissing;
+            this.imagesFresh = imagesFresh;
+            this.projectsFresh = projectsFresh;
+            this.archivedFresh = archivedFresh;
+            this.mirrorFresh = mirrorFresh;
         }
     }
 
+    private final Context context;
     private final DriveDb db;
     private final long accountId;
     private final ChatGptProvider provider;
     private final NormalizedIndexRepository index;
 
-    ChatGptSyncCoordinator(DriveDb db, long accountId, ChatGptProvider provider) {
+    ChatGptSyncCoordinator(Context context, DriveDb db, long accountId, ChatGptProvider provider) {
+        this.context = context.getApplicationContext();
         this.db = db;
         this.accountId = accountId;
         this.provider = provider;
@@ -92,13 +109,7 @@ final class ChatGptSyncCoordinator {
         SQLiteDatabase sql = db.getWritableDatabase();
         sql.beginTransaction();
         try {
-            // Library is authoritative and is replaced only after the complete remote snapshot exists.
-            // Stable file row ids are preserved so open DocumentsProvider handles do not break.
-            // Rows owned by a failed sub-surface survive until that endpoint succeeds again.
             index.replaceFiles(sql, allFiles, preserveSources);
-
-            // Sub-surfaces commit only when their own fetch succeeded. A temporary endpoint failure
-            // therefore cannot zero a previously valid Projects/Archive index.
             if (projectsFresh) index.replaceProjects(sql, projects);
             if (archivedFresh) index.replaceArchived(sql, archived);
             sql.setTransactionSuccessful();
@@ -125,8 +136,50 @@ final class ChatGptSyncCoordinator {
         db.recordSyncState(accountId, "Archived", archivedFresh, archivedCount, archiveError,
                 archivedFresh ? "table=conversations" : "previous_snapshot_preserved=true");
 
+        // Chat Mirror is a separate, non-destructive surface. A Mirror failure cannot roll back
+        // a valid Drive snapshot. Active conversations are combined with the already-fetched
+        // archived summaries so neither side of the ChatGPT history disappears from the mirror.
+        boolean mirrorFresh = false;
+        String mirrorError = "";
+        int conversationCount = 0;
+        int mirroredChats = 0;
+        int mirrorPending = 0;
+        int mirrorMissing = 0;
+        ChatMirrorRepository mirrorRepo = new ChatMirrorRepository(context, db, accountId);
+        try {
+            ChatMirrorSyncEngine.Result mr = new ChatMirrorSyncEngine(context, db, accountId, provider)
+                    .sync(archivedFresh ? archived : null, ChatMirrorSyncEngine.DEFAULT_BODY_BUDGET, progress);
+            mirrorFresh = true;
+            conversationCount = mr.summaries;
+            mirroredChats = mr.stats.mirrored;
+            mirrorPending = mr.stats.pending;
+            mirrorMissing = mr.stats.missingRemote;
+            db.recordSyncState(accountId, "ChatMirror", true, mirroredChats, "",
+                    "remote=" + mr.stats.remotePresent +
+                            ";pending=" + mirrorPending +
+                            ";missing=" + mirrorMissing +
+                            ";bytes=" + mr.stats.bytes +
+                            ";downloaded_now=" + mr.mirroredNow +
+                            ";body_errors=" + mr.failedBodies);
+        } catch (Exception e) {
+            mirrorError = message(e);
+            ChatMirrorRepository.Stats stats = mirrorRepo.stats();
+            conversationCount = stats.remotePresent;
+            mirroredChats = stats.mirrored;
+            mirrorPending = stats.pending;
+            mirrorMissing = stats.missingRemote;
+            db.recordSyncState(accountId, "ChatMirror", false, mirroredChats, mirrorError,
+                    "remote=" + stats.remotePresent +
+                            ";pending=" + stats.pending +
+                            ";missing=" + stats.missingRemote +
+                            ";bytes=" + stats.bytes +
+                            ";previous_snapshots_preserved=true");
+        }
+
         return new Result(allFiles.size(), imageCount, projectCount, archivedCount,
-                library.pages, library.strategy, imagesFresh, projectsFresh, archivedFresh);
+                library.pages, library.strategy,
+                conversationCount, mirroredChats, mirrorPending, mirrorMissing,
+                imagesFresh, projectsFresh, archivedFresh, mirrorFresh);
     }
 
     private static String message(Throwable e) {
