@@ -25,7 +25,15 @@ final class NormalizedIndexRepository {
     }
 
     void replaceFiles(SQLiteDatabase sql, List<ChatGptModels.RemoteFile> snapshot) {
-        Map<String, Long> existing = fileRows(sql);
+        replaceFiles(sql, snapshot, 0);
+    }
+
+    /**
+     * @param preserveSourceMask source flags whose last good rows must survive when that
+     *                           remote surface failed during the current sync.
+     */
+    void replaceFiles(SQLiteDatabase sql, List<ChatGptModels.RemoteFile> snapshot, int preserveSourceMask) {
+        Map<String, ExistingFile> existing = fileRows(sql);
         Set<String> seen = new HashSet<>();
 
         if (snapshot != null) {
@@ -36,10 +44,14 @@ final class NormalizedIndexRepository {
                 fileId = fileId.trim();
                 seen.add(fileId);
 
-                ContentValues v = fileValues(f, fileId);
-                Long rowId = existing.get(fileId);
-                if (rowId != null && rowId > 0) {
-                    sql.update("files", v, "id=?", new String[]{Long.toString(rowId)});
+                ExistingFile old = existing.get(fileId);
+                int effectiveFlags = f.sourceFlags;
+                if (old != null && preserveSourceMask != 0)
+                    effectiveFlags |= old.sourceFlags & preserveSourceMask;
+
+                ContentValues v = fileValues(f, fileId, effectiveFlags);
+                if (old != null && old.rowId > 0) {
+                    sql.update("files", v, "id=?", new String[]{Long.toString(old.rowId)});
                 } else {
                     v.put("account_id", accountId);
                     v.put("file_id", fileId);
@@ -48,12 +60,14 @@ final class NormalizedIndexRepository {
             }
         }
 
-        // Only stale remote identities are removed. Existing rows keep their ids.
-        for (Map.Entry<String, Long> e : existing.entrySet()) {
+        // Only stale identities from successful surfaces are removed. If image_gen or Projects
+        // failed, their previous rows survive until that surface has another successful snapshot.
+        for (Map.Entry<String, ExistingFile> e : existing.entrySet()) {
             if (seen.contains(e.getKey())) continue;
-            long row = e.getValue();
-            sql.delete("project_files", "file_row_id=?", new String[]{Long.toString(row)});
-            sql.delete("files", "id=?", new String[]{Long.toString(row)});
+            ExistingFile old = e.getValue();
+            if ((old.sourceFlags & preserveSourceMask) != 0) continue;
+            sql.delete("project_files", "file_row_id=?", new String[]{Long.toString(old.rowId)});
+            sql.delete("files", "id=?", new String[]{Long.toString(old.rowId)});
         }
 
         // v0.8.0 stored normalized files in legacy category rows as well.
@@ -116,7 +130,7 @@ final class NormalizedIndexRepository {
         }
     }
 
-    private ContentValues fileValues(ChatGptModels.RemoteFile f, String fileId) {
+    private ContentValues fileValues(ChatGptModels.RemoteFile f, String fileId, int sourceFlags) {
         ContentValues v = new ContentValues();
         v.put("library_file_id", nz(f.libraryFileId));
         v.put("name", clean(f.name, "ChatGPT file"));
@@ -130,21 +144,21 @@ final class NormalizedIndexRepository {
         v.put("message_id", nz(f.messageId));
         v.put("width", Math.max(0, f.width));
         v.put("height", Math.max(0, f.height));
-        v.put("source_flags", f.sourceFlags);
+        v.put("source_flags", sourceFlags);
         String ref = f.stableUrl();
         if (blank(ref)) ref = ChatGptApiClient.buildFileRef(fileId, f.conversationId);
         v.put("remote_ref", ref);
         return v;
     }
 
-    private Map<String, Long> fileRows(SQLiteDatabase sql) {
-        HashMap<String, Long> out = new HashMap<>();
-        Cursor c = sql.query("files", new String[]{"id", "file_id"}, "account_id=?",
+    private Map<String, ExistingFile> fileRows(SQLiteDatabase sql) {
+        HashMap<String, ExistingFile> out = new HashMap<>();
+        Cursor c = sql.query("files", new String[]{"id", "file_id", "source_flags"}, "account_id=?",
                 new String[]{Long.toString(accountId)}, null, null, null);
         try {
             while (c.moveToNext()) {
                 String id = c.getString(1);
-                if (!blank(id)) out.put(id, c.getLong(0));
+                if (!blank(id)) out.put(id, new ExistingFile(c.getLong(0), c.getInt(2)));
             }
         } finally { c.close(); }
         return out;
@@ -175,6 +189,15 @@ final class NormalizedIndexRepository {
         try { while (c.moveToNext()) out.add(c.getLong(0)); }
         finally { c.close(); }
         return out;
+    }
+
+    private static final class ExistingFile {
+        final long rowId;
+        final int sourceFlags;
+        ExistingFile(long rowId, int sourceFlags) {
+            this.rowId = rowId;
+            this.sourceFlags = sourceFlags;
+        }
     }
 
     private static boolean blank(String s) { return s == null || s.trim().isEmpty(); }
