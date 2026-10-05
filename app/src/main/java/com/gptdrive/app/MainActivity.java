@@ -54,6 +54,7 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         db = new DriveDb(this);
+        SmartDnsManager.initialize(this);
         buildUi();
     }
 
@@ -545,7 +546,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showMainMenu(View anchor) {
-        showActionPopup(anchor, new String[]{"Синхронизировать Library", "Android Files", "Аккаунты"}, new Runnable[]{() -> openSync("Library"), this::openSystemFiles, () -> startActivity(new Intent(this, AccountManagerActivity.class))}, dp(220));
+        showActionPopup(anchor, new String[]{"Синхронизировать Library", "Routing & DNS", "Android Files", "Аккаунты"}, new Runnable[]{() -> openSync("Library"), () -> startActivity(new Intent(this, DnsSettingsActivity.class)), this::openSystemFiles, () -> startActivity(new Intent(this, AccountManagerActivity.class))}, dp(238));
     }
 
     private void showFabMenu(View anchor) {

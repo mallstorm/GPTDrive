@@ -10,7 +10,7 @@ import java.util.Locale;
 /** Resolves a stable ChatGPT file_id to a fresh signed download URL on every open. */
 final class RemoteFileSource {
     private static final String CHATGPT = "https://chatgpt.com";
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.2";
+    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.3";
 
     private RemoteFileSource() {}
 
@@ -55,7 +55,7 @@ final class RemoteFileSource {
 
     private static Connection openOne(Context context, long accountId, String url, boolean addSessionCookie) throws Exception {
         if (url == null || url.trim().isEmpty()) throw new java.io.IOException("Empty URL");
-        HttpURLConnection h = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection h = (HttpURLConnection) new URL(url).openConnection(SmartDnsProxy.proxy(context));
         h.setInstanceFollowRedirects(true);
         h.setConnectTimeout(12000);
         h.setReadTimeout(45000);

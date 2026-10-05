@@ -37,6 +37,8 @@ public final class ChatGptAuthActivity extends Activity {
     private boolean newAccount;
     private boolean authorized;
     private boolean closing;
+    private boolean freshStarted;
+    private boolean decisionOpen;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -52,7 +54,7 @@ public final class ChatGptAuthActivity extends Activity {
         }
 
         buildWebView();
-        prepareFreshLogin();
+        prepareQuickLogin();
     }
 
     private void buildWebView() {
@@ -66,7 +68,7 @@ public final class ChatGptAuthActivity extends Activity {
         s.setJavaScriptCanOpenWindowsAutomatically(true);
         s.setSupportMultipleWindows(false);
         s.setMediaPlaybackRequiresUserGesture(true);
-        s.setUserAgentString("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.0");
+        s.setUserAgentString("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.3");
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
@@ -88,11 +90,30 @@ public final class ChatGptAuthActivity extends Activity {
         setContentView(web);
     }
 
-    private void prepareFreshLogin() {
+    private void prepareQuickLogin() {
         if (previousActiveId > 0) AccountSession.snapshot(this, previousActiveId);
-        CookieManager cm = CookieManager.getInstance();
-        cm.removeAllCookies(ok -> {
-            cm.flush();
+        long quickId = newAccount ? previousActiveId : targetId;
+        if (quickId > 0 && db.accountById(quickId) != null) {
+            AccountSession.switchTo(this, quickId, () -> {
+                if (web == null || isFinishing()) return;
+                web.loadUrl("https://chatgpt.com/");
+                checkSessionSoon(150);
+                checkSessionSoon(650);
+                checkSessionSoon(1500);
+                handler.postDelayed(() -> {
+                    if (!authorized && !decisionOpen && !freshStarted) startFreshLogin();
+                }, 3200);
+            });
+        } else {
+            startFreshLogin();
+        }
+    }
+
+    private void startFreshLogin() {
+        if (freshStarted || authorized || closing) return;
+        freshStarted = true;
+        decisionOpen = false;
+        AccountSession.startFresh(this, targetId, () -> {
             if (!isFinishing() && web != null) web.loadUrl("https://chatgpt.com/auth/login");
         });
     }
@@ -116,10 +137,29 @@ public final class ChatGptAuthActivity extends Activity {
                 String name = user == null ? "" : user.optString("name", "").trim();
                 String accessToken = root.optString("accessToken", "").trim();
                 if (email.isEmpty() && accessToken.isEmpty()) return;
-                authorized = true;
-                runOnUiThread(() -> completeAuthorization(json, name, email));
+                runOnUiThread(() -> {
+                    if (newAccount && !freshStarted) showQuickAccountChoice(json, name, email);
+                    else { authorized = true; completeAuthorization(json, name, email); }
+                });
             } catch (Exception ignored) {}
         }
+    }
+
+    private void showQuickAccountChoice(String json, String name, String email) {
+        if (authorized || closing || decisionOpen || freshStarted) return;
+        decisionOpen = true;
+        String who = email == null || email.trim().isEmpty() ? "текущий ChatGPT аккаунт" : email.trim();
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Быстрый вход")
+                .setMessage("Продолжить как " + who + "?")
+                .setPositiveButton("Продолжить", (d, w) -> {
+                    decisionOpen = false; authorized = true; completeAuthorization(json, name, email);
+                })
+                .setNegativeButton("Другой аккаунт", (d, w) -> {
+                    decisionOpen = false; startFreshLogin();
+                })
+                .setOnCancelListener(d -> { decisionOpen = false; startFreshLogin(); })
+                .show();
     }
 
     private void completeAuthorization(String sessionJson, String name, String email) {

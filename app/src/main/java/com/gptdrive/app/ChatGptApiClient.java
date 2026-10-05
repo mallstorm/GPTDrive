@@ -36,7 +36,7 @@ final class ChatGptApiClient {
     static final class AuthException extends Exception { AuthException(String message) { super(message); } }
 
     private static final String BASE = "https://chatgpt.com";
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.2";
+    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.3";
     private static final Pattern FILE_ID = Pattern.compile("(file[-_][A-Za-z0-9_-]{6,})", Pattern.CASE_INSENSITIVE);
 
     private final Context context;
@@ -230,7 +230,8 @@ final class ChatGptApiClient {
     private Response request(String method, String endpoint, String payload) throws Exception {
         session = ChatGptSessionStore.load(context, localAccountId);
         if (session == null || session.accessToken == null || session.accessToken.isEmpty()) throw new AuthException("Нет backend-сессии ChatGPT");
-        HttpURLConnection h = (HttpURLConnection) new URL(endpoint.startsWith("http") ? endpoint : BASE + endpoint).openConnection();
+        URL requestUrl = new URL(endpoint.startsWith("http") ? endpoint : BASE + endpoint);
+        HttpURLConnection h = (HttpURLConnection) requestUrl.openConnection(SmartDnsProxy.proxy(context));
         h.setRequestMethod(method); h.setConnectTimeout(15000); h.setReadTimeout(30000); h.setInstanceFollowRedirects(true);
         h.setRequestProperty("Authorization", "Bearer " + session.accessToken); h.setRequestProperty("Accept", "application/json, text/plain, */*");
         h.setRequestProperty("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8"); h.setRequestProperty("Referer", BASE + "/library"); h.setRequestProperty("Origin", BASE);
