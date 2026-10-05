@@ -32,7 +32,8 @@ final class ChatGptSyncCoordinator {
         try {
             library = provider.loadLibrary(250, progress);
         } catch (Exception e) {
-            db.recordSyncState(accountId, "Library", false, 0, message(e), "");
+            SyncStateRepository.record(db, accountId, "Library", false, 0, message(e), "");
+            DiagnosticsState.recordError("Library", message(e));
             throw e;
         }
         LinkedHashMap<String, ChatGptModels.RemoteFile> files = ChatGptModels.map(library.files);
@@ -43,9 +44,10 @@ final class ChatGptSyncCoordinator {
             for (ChatGptModels.RemoteFile f : provider.loadImages(progress)) ChatGptModels.merge(files, f);
             imagesFresh = true;
         } catch (ChatGptProvider.AuthException e) {
-            db.recordSyncState(accountId, "Images", false, 0, message(e), "");
+            SyncStateRepository.record(db, accountId, "Images", false, 0, message(e), "");
+            DiagnosticsState.recordError("Images", message(e));
             throw e;
-        } catch (Exception e) { imageError = message(e); }
+        } catch (Exception e) { imageError = message(e); DiagnosticsState.recordError("Images", imageError); }
 
         List<ChatGptModels.RemoteProject> projects = null;
         boolean projectsFresh = false;
@@ -56,18 +58,20 @@ final class ChatGptSyncCoordinator {
                 for (ChatGptModels.RemoteFile f : p.files) ChatGptModels.merge(files, f);
             projectsFresh = true;
         } catch (ChatGptProvider.AuthException e) {
-            db.recordSyncState(accountId, "Projects", false, 0, message(e), "");
+            SyncStateRepository.record(db, accountId, "Projects", false, 0, message(e), "");
+            DiagnosticsState.recordError("Projects", message(e));
             throw e;
-        } catch (Exception e) { projectError = message(e); }
+        } catch (Exception e) { projectError = message(e); DiagnosticsState.recordError("Projects", projectError); }
 
         List<ChatGptModels.RemoteConversation> archived = null;
         boolean archivedFresh = false;
         String archiveError = "";
         try { archived = provider.loadArchived(); archivedFresh = true; }
         catch (ChatGptProvider.AuthException e) {
-            db.recordSyncState(accountId, "Archived", false, 0, message(e), "");
+            SyncStateRepository.record(db, accountId, "Archived", false, 0, message(e), "");
+            DiagnosticsState.recordError("Archived", message(e));
             throw e;
-        } catch (Exception e) { archiveError = message(e); }
+        } catch (Exception e) { archiveError = message(e); DiagnosticsState.recordError("Archived", archiveError); }
 
         ArrayList<ChatGptModels.RemoteFile> allFiles = new ArrayList<>(files.values());
         int imageCount = 0;
@@ -80,6 +84,9 @@ final class ChatGptSyncCoordinator {
             if (projects != null) {
                 db.replaceProjectsNormalized(sql, accountId, projects);
                 replaceProjectLinks(sql, projects);
+            } else {
+                // File rows are replaced as a snapshot; stale project/file row ids must not survive.
+                sql.delete("project_files", null, null);
             }
             if (archived != null) {
                 db.replaceConversationsNormalized(sql, accountId, archived);
@@ -91,13 +98,14 @@ final class ChatGptSyncCoordinator {
         db.pruneFalsePositives(accountId);
         IndexMaintenance.pruneTransientSignedUrls(db, accountId);
         db.markSynced(accountId);
-        db.recordSyncState(accountId, "Library", true, allFiles.size(), "",
+        SyncStateRepository.record(db, accountId, "Library", true, allFiles.size(), "",
                 "pages=" + library.pages + ";strategy=" + library.strategy);
-        db.recordSyncState(accountId, "Images", imagesFresh, imageCount, imageError, "");
+        SyncStateRepository.record(db, accountId, "Images", imagesFresh, imageCount, imageError, "");
         int projectCount = projects == null ? (int) db.count(accountId, "Projects") : projects.size();
-        db.recordSyncState(accountId, "Projects", projectsFresh, projectCount, projectError, "");
+        SyncStateRepository.record(db, accountId, "Projects", projectsFresh, projectCount, projectError, "");
         int archivedCount = archived == null ? (int) db.count(accountId, "Archived") : archived.size();
-        db.recordSyncState(accountId, "Archived", archivedFresh, archivedCount, archiveError, "");
+        SyncStateRepository.record(db, accountId, "Archived", archivedFresh, archivedCount, archiveError, "");
+        DiagnosticsState.recordPagination(library.strategy, library.pages, allFiles.size());
 
         return new Result(allFiles.size(), imageCount, projectCount, archivedCount,
                 library.pages, library.strategy, imagesFresh, projectsFresh, archivedFresh);
