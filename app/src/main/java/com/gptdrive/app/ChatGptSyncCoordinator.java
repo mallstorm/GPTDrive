@@ -34,12 +34,14 @@ final class ChatGptSyncCoordinator {
         }
     }
 
+    private final Context context;
     private final DriveDb db;
     private final long accountId;
     private final ChatGptProvider provider;
     private final NormalizedIndexRepository index;
 
     ChatGptSyncCoordinator(Context context, DriveDb db, long accountId, ChatGptProvider provider) {
+        this.context = context.getApplicationContext();
         this.db = db;
         this.accountId = accountId;
         this.provider = provider;
@@ -125,6 +127,17 @@ final class ChatGptSyncCoordinator {
             sql.endTransaction();
         }
 
+        // v0.10.3 and older could leave full gzip conversation mirrors and derived attachment
+        // relations on the phone. Metadata-only mode removes those leftovers after the new remote
+        // index has been committed, so an in-place upgrade does not keep an unwanted local mirror.
+        try { new ChatMirrorRepository(context, db, accountId).deleteAccountMirror(); }
+        catch (Exception ignored) {}
+        try {
+            new ChatAttachmentRepository(db, accountId); // ensures legacy table exists before delete
+            db.getWritableDatabase().delete("chat_attachments", "account_id=?",
+                    new String[]{Long.toString(accountId)});
+        } catch (Exception ignored) {}
+
         db.pruneFalsePositives(accountId);
         IndexMaintenance.pruneTransientSignedUrls(db, accountId);
         db.markSynced(accountId);
@@ -146,7 +159,7 @@ final class ChatGptSyncCoordinator {
                 archivedFresh ? "mode=metadata-only;table=conversations" : "previous_snapshot_preserved=true");
 
         db.recordSyncState(accountId, "ChatMirror", true, 0, "",
-                "mode=metadata-only;body_downloads=0;full_chat_mirror_disabled=true");
+                "mode=metadata-only;body_downloads=0;full_chat_mirror_disabled=true;legacy_mirror_removed=true");
 
         return new Result(allFiles.size(), imageCount, projectCount, archivedCount,
                 library.pages, library.strategy,
