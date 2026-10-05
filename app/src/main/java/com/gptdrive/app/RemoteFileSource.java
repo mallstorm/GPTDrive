@@ -10,7 +10,7 @@ import java.util.Locale;
 /** Resolves a stable ChatGPT file_id to a fresh signed download URL on every open. */
 final class RemoteFileSource {
     private static final String CHATGPT = "https://chatgpt.com";
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.0";
+    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.2";
 
     private RemoteFileSource() {}
 
@@ -62,7 +62,19 @@ final class RemoteFileSource {
         h.setRequestProperty("User-Agent", UA);
         h.setRequestProperty("Accept", "*/*");
         h.setRequestProperty("Referer", CHATGPT + "/");
-        if (addSessionCookie || url.contains("chatgpt.com")) {
+
+        boolean chatGptBackend = url.startsWith(CHATGPT + "/") || url.startsWith("https://www.chatgpt.com/");
+        if (chatGptBackend) {
+            ChatGptSessionStore.Session session = ChatGptSessionStore.load(context, accountId);
+            if (session != null && session.accessToken != null && !session.accessToken.isEmpty()) {
+                h.setRequestProperty("Authorization", "Bearer " + session.accessToken);
+                if (session.accountId != null && !session.accountId.isEmpty())
+                    h.setRequestProperty("chatgpt-account-id", session.accountId);
+            }
+            h.setRequestProperty("Origin", CHATGPT);
+            h.setRequestProperty("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8");
+        }
+        if (addSessionCookie || chatGptBackend) {
             String cookie = AccountSession.cookieHeader(context, accountId, url);
             if (cookie != null && !cookie.trim().isEmpty()) h.setRequestProperty("Cookie", cookie);
         }

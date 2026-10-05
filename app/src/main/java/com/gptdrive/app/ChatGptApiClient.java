@@ -36,7 +36,7 @@ final class ChatGptApiClient {
     static final class AuthException extends Exception { AuthException(String message) { super(message); } }
 
     private static final String BASE = "https://chatgpt.com";
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.1";
+    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.2";
     private static final Pattern FILE_ID = Pattern.compile("(file[-_][A-Za-z0-9_-]{6,})", Pattern.CASE_INSENSITIVE);
 
     private final Context context;
@@ -84,69 +84,73 @@ final class ChatGptApiClient {
     }
 
     static String resolveDownloadUrl(Context context, long localAccountId, String fileId, String conversationId) throws Exception {
-        ChatGptApiClient c = new ChatGptApiClient(context, new DriveDb(context.getApplicationContext()), localAccountId);
+        // Validate that we still have a backend session, then return the authenticated
+        // backend download route. The route itself redirects to a fresh signed asset URL.
+        new ChatGptApiClient(context, new DriveDb(context.getApplicationContext()), localAccountId);
         String fid = extractFileId(fileId);
         if (fid.isEmpty()) throw new java.io.IOException("У файла нет file_id");
-        String q = "?inline=false";
-        if (conversationId != null && !conversationId.trim().isEmpty()) q += "&conversation_id=" + Uri.encode(conversationId.trim());
-        String[] endpoints = {"/backend-api/files/download/" + Uri.encode(fid) + q, "/backend-api/files/" + Uri.encode(fid) + "/download" + q};
-        Exception last = null;
-        for (String ep : endpoints) {
-            try {
-                Response r = c.request("GET", ep, null);
-                if (r.code == 401 || r.code == 403) throw new AuthException("ChatGPT session истекла (HTTP " + r.code + ")");
-                if (r.code < 200 || r.code >= 300) continue;
-                JSONObject o = new JSONObject(r.body);
-                String u = first(o.optString("download_url", ""), o.optString("downloadUrl", ""), o.optString("url", ""));
-                if (u.startsWith("http://") || u.startsWith("https://")) return u;
-            } catch (Exception e) { last = e; }
+        StringBuilder u = new StringBuilder(BASE)
+                .append("/backend-api/files/download/")
+                .append(Uri.encode(fid));
+        if (conversationId != null && !conversationId.trim().isEmpty()) {
+            u.append("?conversation_id=").append(Uri.encode(conversationId.trim()));
         }
-        if (last instanceof AuthException) throw last;
-        throw new java.io.IOException("ChatGPT не выдал свежую ссылку на файл");
+        return u.toString();
     }
 
     private LibraryResult fetchLibraryPages(int maxPages, Progress progress) throws Exception {
+        // Current ChatGPT Library uses GET /files/library/nodes with cursor=<cursor>.
+        // POST /files/library is useful for other surfaces but its cursor is not the
+        // continuation token for enumerating the complete Library and caused HTTP 400.
         LinkedHashMap<String, RemoteEntry> merged = new LinkedHashMap<>();
         ArrayList<String> seenCursors = new ArrayList<>();
-        int strategy = -1, pages = 0;
-        PageRequest request = new PageRequest("/backend-api/files/library", "{}");
-        while (pages < maxPages) {
-            Response r = request("POST", request.endpoint, request.payload);
-            if (pages > 0 && !merged.isEmpty() && isPaginationRejected(r.code)) break;
-            ensureLibraryStatus(r);
-            Page page = decodeLibraryPage(r.body);
-            pages++;
-            int before = merged.size();
-            for (RemoteEntry f : page.files) merge(merged, f);
-            if (progress != null) progress.onProgress("Файлы", 1, 4, merged.size());
-            if ((!page.hasMore && page.nextCursor.isEmpty()) || pages >= maxPages) break;
-            String next = page.nextCursor;
-            if (next.isEmpty()) { strategy = 5; request = libraryRequestForStrategy(strategy, "", merged.size()); continue; }
-            if (seenCursors.contains(next)) break;
-            seenCursors.add(next);
-            if (strategy >= 0) { request = libraryRequestForStrategy(strategy, next, merged.size()); continue; }
+        String cursor = "";
+        int pages = 0;
 
-            boolean accepted = false;
-            for (int candidate = 0; candidate <= 4; candidate++) {
-                PageRequest probe = libraryRequestForStrategy(candidate, next, merged.size());
-                Response p = request("POST", probe.endpoint, probe.payload);
-                if (p.code != 200) continue;
-                Page pp = decodeLibraryPage(p.body);
-                int newCount = 0;
-                for (RemoteEntry f : pp.files) if (!merged.containsKey(f.identity())) newCount++;
-                boolean progressed = newCount > 0 || !pp.nextCursor.equals(next) || (!pp.hasMore && pp.nextCursor.isEmpty());
-                if (!progressed) continue;
-                strategy = candidate; pages++;
-                for (RemoteEntry f : pp.files) merge(merged, f);
-                if (progress != null) progress.onProgress("Файлы", 1, 4, merged.size());
-                accepted = true;
-                if (pages >= maxPages || (!pp.hasMore && pp.nextCursor.isEmpty())) request = null;
-                else request = libraryRequestForStrategy(pp.nextCursor.isEmpty() ? 5 : strategy, pp.nextCursor, merged.size());
-                break;
+        while (pages < maxPages) {
+            String endpoint = "/backend-api/files/library/nodes" +
+                    (cursor.isEmpty() ? "" : "?cursor=" + Uri.encode(cursor));
+
+            Response r = null;
+            for (int attempt = 0; attempt < 4; attempt++) {
+                r = request("GET", endpoint, null);
+                if (r.code == 200 || r.code == 401 || r.code == 403) break;
+                if (r.code != 429 && r.code < 500) break;
+                try { Thread.sleep(Math.min(8000L, 700L * (1L << attempt))); }
+                catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
             }
-            if (!accepted) { strategy = 5; request = libraryRequestForStrategy(strategy, "", merged.size()); }
-            if (request == null) break;
-            if (merged.size() == before && strategy == 5 && pages > 3) break;
+            if (r == null) throw new java.io.IOException("ChatGPT Library: пустой ответ");
+            if (r.code == 401 || r.code == 403)
+                throw new AuthException("ChatGPT session истекла (HTTP " + r.code + ")");
+            if (r.code != 200)
+                throw new java.io.IOException("ChatGPT Library nodes HTTP " + r.code);
+
+            JSONObject root = new JSONObject(r.body);
+            JSONArray items = root.optJSONArray("items");
+            if (items == null)
+                throw new java.io.IOException("ChatGPT Library вернула неизвестный формат");
+
+            int before = merged.size();
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.optJSONObject(i);
+                if (item == null) continue;
+                if (item.optBoolean("is_root", false)) continue;
+                if ("directory".equalsIgnoreCase(item.optString("kind", ""))) continue;
+                RemoteEntry e = mapToRemote(item);
+                if (e != null) merge(merged, e);
+            }
+            pages++;
+            if (progress != null) progress.onProgress("Файлы", 1, 4, merged.size());
+
+            String next = root.optString("cursor", "").trim();
+            if (next.isEmpty()) break;
+            if (next.equals(cursor) || seenCursors.contains(next)) break;
+            seenCursors.add(next);
+            cursor = next;
+
+            // If the backend returned only duplicates but still repeated a cursor chain,
+            // continue one page; the cursor guards above prevent an infinite loop.
+            if (merged.size() == before && items.length() == 0) break;
         }
         return new LibraryResult(new ArrayList<>(merged.values()), pages);
     }

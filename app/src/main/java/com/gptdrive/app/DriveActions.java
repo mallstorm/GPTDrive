@@ -33,7 +33,16 @@ final class DriveActions {
                 String resolved=RemoteFileSource.resolve(app,item.accountId,item.url);
                 DownloadManager.Request r=new DownloadManager.Request(Uri.parse(resolved));
                 r.addRequestHeader("Referer","https://chatgpt.com/");
-                r.addRequestHeader("User-Agent","Mozilla/5.0 Android GPTDrive/0.6.0");
+                r.addRequestHeader("User-Agent","Mozilla/5.0 Android GPTDrive/0.6.2");
+                if(resolved.startsWith("https://chatgpt.com/")){
+                    ChatGptSessionStore.Session s=ChatGptSessionStore.load(app,item.accountId);
+                    if(s!=null&&s.accessToken!=null&&!s.accessToken.isEmpty()){
+                        r.addRequestHeader("Authorization","Bearer "+s.accessToken);
+                        if(s.accountId!=null&&!s.accountId.isEmpty())r.addRequestHeader("chatgpt-account-id",s.accountId);
+                    }
+                    String cookie=AccountSession.cookieHeader(app,item.accountId,resolved);
+                    if(cookie!=null&&!cookie.trim().isEmpty())r.addRequestHeader("Cookie",cookie);
+                }
                 r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
                 String name=item.name==null||item.name.trim().isEmpty()?URLUtil.guessFileName(resolved,null,item.mime):safeFileName(item.name);
                 r.setTitle(name);
