@@ -1,0 +1,132 @@
+name: Hotfix GPT Drive Library pagination
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/hotfix-library-pagination.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-24.04
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply Library pagination hotfix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          client = Path('app/src/main/java/com/gptdrive/app/ChatGptApiClient.java')
+          s = client.read_text(encoding='utf-8')
+
+          old = '''        while (pages < maxPages) {
+              Response r = request("POST", request.endpoint, request.payload);
+              ensureLibraryStatus(r);
+              Page page = decodeLibraryPage(r.body);'''
+          # tolerate indentation differences by using the exact source indentation below
+          old = '''        while (pages < maxPages) {
+              Response r = request("POST", request.endpoint, request.payload);
+              ensureLibraryStatus(r);
+              Page page = decodeLibraryPage(r.body);'''.replace('              ', '            ')
+          new = '''        while (pages < maxPages) {
+            Response r = request("POST", request.endpoint, request.payload);
+            if (pages > 0 && !merged.isEmpty() && isPaginationRejected(r.code)) break;
+            ensureLibraryStatus(r);
+            Page page = decodeLibraryPage(r.body);'''
+          if old not in s:
+              raise SystemExit('fetchLibraryPages request block not found')
+          s = s.replace(old, new, 1)
+
+          old = '            if (seenCursors.contains(next)) throw new java.io.IOException("Library pagination cursor зациклился");'
+          new = '            if (seenCursors.contains(next)) break;'
+          if old not in s:
+              raise SystemExit('cursor loop block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''                JSONObject o = (JSONObject) root; nextCursor = findString(o, 0, "next_cursor", "nextCursor", "next_page_cursor", "nextPageCursor");
+                if (nextCursor.isEmpty()) nextCursor = o.optString("cursor", "").trim(); hasMore = findBoolean(o, 0, "has_more", "hasMore", "more") || !nextCursor.isEmpty();'''
+          new = '''                JSONObject o = (JSONObject) root;
+                boolean explicitMore = findBoolean(o, 0, "has_more", "hasMore", "more");
+                nextCursor = findString(o, 0, "next_cursor", "nextCursor", "next_page_cursor", "nextPageCursor");
+                if (nextCursor.isEmpty() && explicitMore) nextCursor = o.optString("cursor", "").trim();
+                hasMore = explicitMore || !nextCursor.isEmpty();'''
+          if old not in s:
+              raise SystemExit('decodeLibraryPage pagination block not found')
+          s = s.replace(old, new, 1)
+
+          marker = '    private static void ensureLibraryStatus(Response r) throws Exception {'
+          helper = '''    private static boolean isPaginationRejected(int code) {
+        return code == 400 || code == 404 || code == 405 || code == 422;
+    }
+
+'''
+          if marker not in s:
+              raise SystemExit('ensureLibraryStatus marker not found')
+          if 'private static boolean isPaginationRejected' not in s:
+              s = s.replace(marker, helper + marker, 1)
+
+          s = s.replace('GPTDrive/0.6.0', 'GPTDrive/0.6.1')
+          client.write_text(s, encoding='utf-8')
+
+          browser = Path('app/src/main/java/com/gptdrive/app/BrowserActivity.java')
+          b = browser.read_text(encoding='utf-8')
+          if 'GPTDrive/0.6.0' not in b:
+              raise SystemExit('BrowserActivity version marker not found')
+          browser.write_text(b.replace('GPTDrive/0.6.0', 'GPTDrive/0.6.1'), encoding='utf-8')
+
+          gradle = Path('app/build.gradle')
+          g = gradle.read_text(encoding='utf-8')
+          if "versionCode 17" not in g or "versionName '0.6.0'" not in g:
+              raise SystemExit('Gradle version markers not found')
+          g = g.replace('versionCode 17', 'versionCode 18', 1).replace("versionName '0.6.0'", "versionName '0.6.1'", 1)
+          gradle.write_text(g, encoding='utf-8')
+
+          normal_ci = Path('.github/workflows/android.yml')
+          y = normal_ci.read_text(encoding='utf-8')
+          if 'GPTDrive-v0.6.0-debug' not in y:
+              raise SystemExit('android.yml artifact marker not found')
+          normal_ci.write_text(y.replace('GPTDrive-v0.6.0-debug', 'GPTDrive-v0.6.1-debug', 1), encoding='utf-8')
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Install Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Build fixed APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GPTDrive-v0.6.1-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Commit tested hotfix
+        run: |
+          rm -f .github/workflows/hotfix-library-pagination.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/gptdrive/app/ChatGptApiClient.java \
+                  app/src/main/java/com/gptdrive/app/BrowserActivity.java \
+                  app/build.gradle .github/workflows/android.yml \
+                  .github/workflows/hotfix-library-pagination.yml
+          git commit -m "GPT Drive v0.6.1: fix Library pagination HTTP 400"
+          git push origin HEAD:main
