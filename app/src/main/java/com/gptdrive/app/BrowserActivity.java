@@ -28,6 +28,7 @@ public final class BrowserActivity extends Activity {
     private static final int GREEN = 0xFF08A66D;
     private static final int TEXT = 0xFF101828;
     private static final int MUTED = 0xFF667085;
+    private static final int WARNING = 0xFFB54708;
     private static final int BG = 0xFFF7F9FA;
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -99,7 +100,7 @@ public final class BrowserActivity extends Activity {
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.addView(text("GPT Drive", 20, true, TEXT));
-        titles.addView(text("Native API Sync · provider v0.8.2", 10, false, MUTED));
+        titles.addView(text("Native API Sync · " + AppIdentity.providerLabel(), 10, false, MUTED));
         header.addView(titles, new LinearLayout.LayoutParams(0, dp(52), 1));
         TextView close = text("×", 27, false, MUTED);
         close.setGravity(Gravity.CENTER);
@@ -166,6 +167,7 @@ public final class BrowserActivity extends Activity {
         syncButton.setEnabled(false);
         syncButton.setAlpha(.55f);
         syncButton.setText("Идёт синхронизация…");
+        syncStatus.setTextColor(MUTED);
         setStatus("Подключаюсь к ChatGPT backend…", 0);
         worker.execute(() -> {
             try {
@@ -188,7 +190,10 @@ public final class BrowserActivity extends Activity {
         ChatGptSessionStore.Session old = ChatGptSessionStore.load(this, accountId);
         sessionSavedAtBeforePrompt = old == null ? 0 : old.savedAt;
         if (bars != null) bars.setActive(false);
-        if (syncStatus != null) syncStatus.setText((message == null ? "Нужен Session JSON." : message) + " Открой импорт Session JSON и обнови Library-доступ.");
+        if (syncStatus != null) {
+            syncStatus.setTextColor(WARNING);
+            syncStatus.setText((message == null ? "Нужен Session JSON." : message) + " Открой импорт Session JSON и обнови Library-доступ.");
+        }
         if (syncButton != null) {
             syncButton.setText("Обновить Session JSON");
             syncButton.setEnabled(true);
@@ -228,12 +233,25 @@ public final class BrowserActivity extends Activity {
         notifyRoots();
         AccountProfile a = db.accountById(accountId);
         if (a != null) syncAccount.setText(a.displayName() + "  ·  " + a.planLabel());
-        syncStatus.setText("Готово · Library " + r.library + " · Images " + r.images + " · Projects " + r.projects + " · Archive " + r.archived);
+
+        if (r.fullyFresh()) {
+            syncStatus.setTextColor(MUTED);
+            syncStatus.setText("Готово · Library " + r.library + " · Images " + r.images + " · Projects " + r.projects + " · Archive " + r.archived);
+            syncButton.setText("Готово");
+        } else {
+            StringBuilder warning = new StringBuilder("Library синхронизирована");
+            if (!r.imagesFresh) warning.append(" · Images: сохранён предыдущий снимок");
+            if (!r.projectsFresh) warning.append(" · Projects: сохранён предыдущий снимок");
+            if (!r.archivedFresh) warning.append(" · Archive: сохранён предыдущий снимок");
+            syncStatus.setTextColor(WARNING);
+            syncStatus.setText(warning.toString());
+            syncButton.setText("Готово с предупреждением");
+        }
+
         String strategy = r.libraryStrategy < 0 ? "initial" : Integer.toString(r.libraryStrategy);
         syncCount.setText("Library pages: " + r.pages + " · strategy " + strategy);
         syncBytes.setText(storageText());
         bars.setActive(false);
-        syncButton.setText("Готово");
         syncButton.setEnabled(true);
         syncButton.setAlpha(1f);
     }
@@ -243,6 +261,7 @@ public final class BrowserActivity extends Activity {
         finished = false;
         waitingForSession = false;
         bars.setActive(false);
+        syncStatus.setTextColor(WARNING);
         syncStatus.setText(message == null || message.trim().isEmpty() ? "Ошибка синхронизации" : message);
         syncButton.setText("Повторить");
         syncButton.setEnabled(true);
