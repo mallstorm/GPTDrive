@@ -63,6 +63,29 @@ final class DocumentsIndex {
         return out;
     }
 
+    /** Files linked from a mirrored conversation, resolved through normalized file identities. */
+    List<DriveItem> conversationFiles(long accountId, String conversationId, int limit) {
+        ArrayList<DriveItem> out = new ArrayList<>();
+        if (conversationId == null || conversationId.trim().isEmpty()) return out;
+        SQLiteDatabase sql = db.getReadableDatabase();
+        String query = "SELECT DISTINCT f.id,f.account_id,f.name,f.remote_ref,f.mime,f.size_bytes,f.updated_at " +
+                "FROM chat_attachments ca JOIN files f ON f.account_id=ca.account_id AND f.file_id=ca.file_id " +
+                "WHERE ca.account_id=? AND ca.conversation_id=? ORDER BY f.updated_at DESC LIMIT ?";
+        Cursor c;
+        try {
+            c = sql.rawQuery(query, new String[]{Long.toString(accountId), conversationId.trim(), Integer.toString(limit)});
+        } catch (Exception e) {
+            return out;
+        }
+        try {
+            while (c.moveToNext()) {
+                out.add(new DriveItem(-c.getLong(0), c.getLong(1), "Chat Mirror",
+                        c.getString(2), c.getString(3), c.getString(4), c.getLong(5), c.getLong(6)));
+            }
+        } finally { c.close(); }
+        return out;
+    }
+
     List<ConversationDoc> archived(long accountId, int limit) {
         ArrayList<ConversationDoc> out = new ArrayList<>();
         Cursor c = db.getReadableDatabase().query("conversations", null, "account_id=? AND archived=1",
