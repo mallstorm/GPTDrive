@@ -8,10 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Conversation surface used by Archive today and by Chat Mirror later.
- * It intentionally preserves the full conversation JSON without interpreting the mapping tree.
- */
+/** Conversation metadata/full mapping surface for Archive and Chat Mirror. */
 final class ChatGptConversationsApi {
     interface Fetcher { HttpResponse get(String endpoint) throws Exception; }
     interface StatusHandler { void ensure(HttpResponse response) throws Exception; }
@@ -68,6 +65,7 @@ final class ChatGptConversationsApi {
         c.currentNode = first(root.optString("current_node", ""), root.optString("currentNode", ""));
         JSONObject mapping = root.optJSONObject("mapping");
         c.hasMapping = mapping != null && mapping.length() > 0;
+        c.attachments.addAll(ChatGptAttachmentExtractor.extract(root, c.id, c.projectId));
         return c;
     }
 
