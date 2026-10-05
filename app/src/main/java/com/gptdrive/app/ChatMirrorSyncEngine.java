@@ -2,6 +2,8 @@ package com.gptdrive.app;
 
 import android.content.Context;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 /** Incremental, non-destructive Chat Mirror synchronizer. */
@@ -30,17 +32,20 @@ final class ChatMirrorSyncEngine {
         this.mirror = new ChatMirrorRepository(context, db, accountId);
     }
 
-    Result sync(int bodyBudget, ChatGptProvider.Progress progress) throws Exception {
-        List<ChatGptModels.RemoteConversation> summaries = provider.loadConversations();
+    Result sync(List<ChatGptModels.RemoteConversation> archivedSeed,
+                int bodyBudget, ChatGptProvider.Progress progress) throws Exception {
+        List<ChatGptModels.RemoteConversation> active = provider.loadConversations();
+        LinkedHashMap<String, ChatGptModels.RemoteConversation> merged = new LinkedHashMap<>();
+        mergeSummaries(merged, active);
+        mergeSummaries(merged, archivedSeed);
+        ArrayList<ChatGptModels.RemoteConversation> summaries = new ArrayList<>(merged.values());
         mirror.applyRemoteSummaries(summaries);
 
         int limit = bodyBudget <= 0 ? DEFAULT_BODY_BUDGET : Math.min(bodyBudget, 500);
         List<String> pending = mirror.pendingIds(limit);
         int mirrored = 0;
         int failed = 0;
-        int i = 0;
         for (String id : pending) {
-            i++;
             try {
                 ChatGptModels.RemoteConversation full = provider.loadConversation(id);
                 mirror.storeFull(full);
@@ -56,7 +61,28 @@ final class ChatMirrorSyncEngine {
                 progress.onProgress("Chat Mirror", 5, 5, mirrored);
         }
 
-        return new Result(summaries == null ? 0 : summaries.size(), mirrored, failed, mirror.stats());
+        return new Result(summaries.size(), mirrored, failed, mirror.stats());
+    }
+
+    private static void mergeSummaries(LinkedHashMap<String, ChatGptModels.RemoteConversation> out,
+                                       List<ChatGptModels.RemoteConversation> list) {
+        if (list == null) return;
+        for (ChatGptModels.RemoteConversation c : list) {
+            if (c == null || c.id == null || c.id.trim().isEmpty()) continue;
+            String id = c.id.trim();
+            ChatGptModels.RemoteConversation old = out.get(id);
+            if (old == null) {
+                out.put(id, c);
+                continue;
+            }
+            if ((old.title == null || old.title.trim().isEmpty() || "ChatGPT chat".equals(old.title)) &&
+                    c.title != null && !c.title.trim().isEmpty()) old.title = c.title;
+            old.createdAt = old.createdAt > 0 ? old.createdAt : c.createdAt;
+            old.updatedAt = Math.max(old.updatedAt, c.updatedAt);
+            old.archived = old.archived || c.archived;
+            if ((old.projectId == null || old.projectId.trim().isEmpty()) && c.projectId != null)
+                old.projectId = c.projectId;
+        }
     }
 
     ChatMirrorRepository.Stats stats() { return mirror.stats(); }
