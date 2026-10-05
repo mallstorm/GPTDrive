@@ -58,11 +58,19 @@ final class ChatGptModels {
         final List<String> conversationIds = new ArrayList<>();
     }
 
+    /** Summary or full raw conversation. rawJson is filled only for /conversation/<id>. */
     static final class RemoteConversation {
         String id = "";
         String title = "ChatGPT chat";
+        long createdAt;
         long updatedAt;
         boolean archived;
+        String projectId = "";
+        String currentNode = "";
+        boolean hasMapping;
+        String rawJson = "";
+
+        boolean hasFullSnapshot() { return rawJson != null && !rawJson.trim().isEmpty(); }
     }
 
     static final class LibraryPageMeta {
