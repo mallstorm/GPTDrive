@@ -11,6 +11,8 @@
 
         <activity android:name=".AccountManagerActivity" android:exported="false"/>
         <activity android:name=".DnsSettingsActivity" android:exported="false"/>
+        <activity android:name=".ChatGptOAuthActivity" android:exported="false"/>
+        <activity android:name=".SessionImportActivity" android:exported="false"/>
         <activity android:name=".ChatGptAuthActivity" android:exported="false"/>
         <activity android:name=".ImageViewerActivity" android:exported="false"/>
         <activity android:name=".NativeBrowserActivity" android:exported="false"/>
