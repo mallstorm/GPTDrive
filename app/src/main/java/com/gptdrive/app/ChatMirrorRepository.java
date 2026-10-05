@@ -18,28 +18,42 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
-/**
- * Durable local Chat Mirror metadata + gzip snapshots.
- *
- * Remote disappearance never deletes a local snapshot. A missing remote conversation is only
- * marked remote_present=0 with remote_missing_since, matching the Windows reference behavior.
- */
+/** Durable local Chat Mirror metadata + gzip snapshots. */
 final class ChatMirrorRepository {
     static final class Stats {
-        final int total;
-        final int remotePresent;
-        final int mirrored;
-        final int pending;
-        final int missingRemote;
+        final int total, remotePresent, mirrored, pending, missingRemote;
         final long bytes;
-
         Stats(int total, int remotePresent, int mirrored, int pending, int missingRemote, long bytes) {
-            this.total = total;
+            this.total = total; this.remotePresent = remotePresent; this.mirrored = mirrored;
+            this.pending = pending; this.missingRemote = missingRemote; this.bytes = bytes;
+        }
+    }
+
+    static final class Entry {
+        final String conversationId, title, projectId;
+        final long createdAt, updatedAt, mirroredAt, rawSize, missingSince;
+        final boolean archived, remotePresent, hasSnapshot, hasMapping;
+
+        Entry(String conversationId, String title, String projectId, long createdAt, long updatedAt,
+              long mirroredAt, long rawSize, long missingSince, boolean archived,
+              boolean remotePresent, boolean hasSnapshot, boolean hasMapping) {
+            this.conversationId = conversationId;
+            this.title = title;
+            this.projectId = projectId;
+            this.createdAt = createdAt;
+            this.updatedAt = updatedAt;
+            this.mirroredAt = mirroredAt;
+            this.rawSize = rawSize;
+            this.missingSince = missingSince;
+            this.archived = archived;
             this.remotePresent = remotePresent;
-            this.mirrored = mirrored;
-            this.pending = pending;
-            this.missingRemote = missingRemote;
-            this.bytes = bytes;
+            this.hasSnapshot = hasSnapshot;
+            this.hasMapping = hasMapping;
+        }
+
+        String displayName() {
+            String base = clean(title, "ChatGPT chat");
+            return base.endsWith(".json") ? base : base + ".json";
         }
     }
 
@@ -79,7 +93,6 @@ final class ChatMirrorRepository {
                 "(account_id,remote_present,updated_at DESC)");
     }
 
-    /** Apply a complete remote summary snapshot without deleting historical local rows. */
     void applyRemoteSummaries(List<ChatGptModels.RemoteConversation> summaries) {
         ensureSchema();
         SQLiteDatabase sql = db.getWritableDatabase();
@@ -134,7 +147,6 @@ final class ChatMirrorRepository {
         }
     }
 
-    /** New/changed conversations whose full mapping should be refreshed. */
     List<String> pendingIds(int limit) {
         ensureSchema();
         int max = limit <= 0 ? 25 : Math.min(limit, 500);
@@ -150,14 +162,50 @@ final class ChatMirrorRepository {
                 String path = c.getString(1);
                 long sourceUpdated = c.getLong(2);
                 long remoteUpdated = c.getLong(3);
-                boolean stale = sourceUpdated <= 0 || (remoteUpdated > 0 && sourceUpdated < remoteUpdated);
-                boolean missingFile = blank(path) || !resolve(path).isFile();
-                if ((stale || missingFile) && !blank(id)) out.add(id);
+                boolean hasPath = !blank(path);
+                boolean fileExists = hasPath && resolve(path).isFile();
+                if (ChatMirrorPolicy.needsRefresh(hasPath, fileExists, sourceUpdated, remoteUpdated) && !blank(id))
+                    out.add(id);
             }
-        } finally {
-            c.close();
-        }
+        } finally { c.close(); }
         return out;
+    }
+
+    List<Entry> listEntries(int limit) {
+        ensureSchema();
+        int max = limit <= 0 ? 1000 : Math.min(limit, 20000);
+        ArrayList<Entry> out = new ArrayList<>();
+        Cursor c = db.getReadableDatabase().query(TABLE,
+                new String[]{"conversation_id","title","project_id","created_at","updated_at","mirrored_at",
+                        "raw_size","remote_missing_since","archived","remote_present","raw_path","has_mapping"},
+                "account_id=?", new String[]{Long.toString(accountId)}, null, null,
+                "remote_present DESC, updated_at DESC", Integer.toString(max));
+        try {
+            while (c.moveToNext()) {
+                String path = c.getString(10);
+                boolean snapshot = !blank(path) && resolve(path).isFile();
+                out.add(new Entry(c.getString(0), clean(c.getString(1), "ChatGPT chat"), nz(c.getString(2)),
+                        c.getLong(3), c.getLong(4), c.getLong(5), c.getLong(6), c.getLong(7),
+                        c.getInt(8) != 0, c.getInt(9) != 0, snapshot, c.getInt(11) != 0));
+            }
+        } finally { c.close(); }
+        return out;
+    }
+
+    Entry entry(String conversationId) {
+        if (blank(conversationId)) return null;
+        Cursor c = db.getReadableDatabase().query(TABLE,
+                new String[]{"conversation_id","title","project_id","created_at","updated_at","mirrored_at",
+                        "raw_size","remote_missing_since","archived","remote_present","raw_path","has_mapping"},
+                "account_id=? AND conversation_id=?",
+                new String[]{Long.toString(accountId), conversationId.trim()}, null, null, null, "1");
+        try {
+            if (!c.moveToFirst()) return null;
+            String path = c.getString(10);
+            return new Entry(c.getString(0), clean(c.getString(1), "ChatGPT chat"), nz(c.getString(2)),
+                    c.getLong(3), c.getLong(4), c.getLong(5), c.getLong(6), c.getLong(7),
+                    c.getInt(8) != 0, c.getInt(9) != 0, !blank(path) && resolve(path).isFile(), c.getInt(11) != 0);
+        } finally { c.close(); }
     }
 
     void storeFull(ChatGptModels.RemoteConversation conversation) throws Exception {
@@ -277,9 +325,7 @@ final class ChatMirrorRepository {
         finally { c.close(); }
     }
 
-    private File accountDir() {
-        return new File(context.getFilesDir(), "chat_mirror/accounts/a" + accountId);
-    }
+    private File accountDir() { return new File(context.getFilesDir(), "chat_mirror/accounts/a" + accountId); }
 
     private String relativePath(String conversationId) throws Exception {
         return "chat_mirror/accounts/a" + accountId + "/conversations/" + sha256(conversationId) + ".json.gz";
@@ -300,8 +346,7 @@ final class ChatMirrorRepository {
 
     private static void copy(File source, File target) throws Exception {
         try (FileInputStream in = new FileInputStream(source); FileOutputStream out = new FileOutputStream(target)) {
-            byte[] b = new byte[32768];
-            int n;
+            byte[] b = new byte[32768]; int n;
             while ((n = in.read(b)) != -1) out.write(b, 0, n);
             out.getFD().sync();
         }
