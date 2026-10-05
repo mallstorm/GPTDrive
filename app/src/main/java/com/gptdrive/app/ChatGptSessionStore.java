@@ -8,10 +8,11 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 
-/** Stores the short-lived ChatGPT backend session for one GPT Drive account. */
+/** Stores the ChatGPT backend session encrypted with Android Keystore. */
 final class ChatGptSessionStore {
     private static final String PREFS = "chatgpt_backend_sessions";
     private static final String PREFIX = "acct_";
+    private static final String KEY_ALIAS = "GPTDrive.BackendSession.v1";
 
     private ChatGptSessionStore() {}
 
@@ -29,7 +30,8 @@ final class ChatGptSessionStore {
             out.put("accountId", remoteAccountId);
             out.put("email", email);
             out.put("savedAt", System.currentTimeMillis());
-            prefs(context).edit().putString(PREFIX + localAccountId, out.toString()).apply();
+            String sealed = SecureJsonStore.seal(KEY_ALIAS, out.toString());
+            prefs(context).edit().putString(PREFIX + localAccountId, sealed).apply();
             return true;
         } catch (Exception e) {
             return false;
@@ -38,16 +40,24 @@ final class ChatGptSessionStore {
 
     static Session load(Context context, long localAccountId) {
         if (context == null || localAccountId <= 0) return null;
-        String raw = prefs(context).getString(PREFIX + localAccountId, "");
-        if (raw == null || raw.trim().isEmpty()) return null;
+        SharedPreferences p = prefs(context);
+        String stored = p.getString(PREFIX + localAccountId, "");
+        if (stored == null || stored.trim().isEmpty()) return null;
         try {
+            boolean legacyPlaintext = !SecureJsonStore.isSealed(stored);
+            String raw = SecureJsonStore.open(KEY_ALIAS, stored);
             JSONObject o = new JSONObject(raw);
             String token = o.optString("accessToken", "").trim();
             if (token.isEmpty()) return null;
-            return new Session(token,
+            Session out = new Session(token,
                     o.optString("accountId", "").trim(),
                     o.optString("email", "").trim(),
                     o.optLong("savedAt", 0));
+            if (legacyPlaintext) {
+                try { p.edit().putString(PREFIX + localAccountId, SecureJsonStore.seal(KEY_ALIAS, raw)).apply(); }
+                catch (Exception ignored) {}
+            }
+            return out;
         } catch (Exception e) {
             return null;
         }
