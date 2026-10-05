@@ -99,7 +99,7 @@ public final class BrowserActivity extends Activity {
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.addView(text("GPT Drive", 20, true, TEXT));
-        titles.addView(text("Native API Sync · provider v0.8.0", 10, false, MUTED));
+        titles.addView(text("Native API Sync · provider v0.8.2", 10, false, MUTED));
         header.addView(titles, new LinearLayout.LayoutParams(0, dp(52), 1));
         TextView close = text("×", 27, false, MUTED);
         close.setGravity(Gravity.CENTER);
