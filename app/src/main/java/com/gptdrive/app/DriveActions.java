@@ -74,7 +74,7 @@ final class DriveActions {
         String resolved=RemoteFileSource.resolve(app,item.accountId,item.url);
         DownloadManager.Request r=new DownloadManager.Request(Uri.parse(resolved));
         r.addRequestHeader("Referer","https://chatgpt.com/");
-        r.addRequestHeader("User-Agent","Mozilla/5.0 Android GPTDrive/0.6.3");
+        r.addRequestHeader("User-Agent","Mozilla/5.0 Android GPTDrive/0.6.4");
         if(resolved.startsWith("https://chatgpt.com/")){
             ChatGptSessionStore.Session s=ChatGptSessionStore.load(app,item.accountId);
             if(s!=null&&s.accessToken!=null&&!s.accessToken.isEmpty()){

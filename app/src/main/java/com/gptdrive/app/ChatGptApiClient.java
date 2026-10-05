@@ -36,7 +36,7 @@ final class ChatGptApiClient {
     static final class AuthException extends Exception { AuthException(String message) { super(message); } }
 
     private static final String BASE = "https://chatgpt.com";
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.3";
+    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.4";
     private static final Pattern FILE_ID = Pattern.compile("(file[-_][A-Za-z0-9_-]{6,})", Pattern.CASE_INSENSITIVE);
 
     private final Context context;
@@ -122,8 +122,13 @@ final class ChatGptApiClient {
             if (r == null) throw new java.io.IOException("ChatGPT Library: пустой ответ");
             if (r.code == 401 || r.code == 403)
                 throw new AuthException("ChatGPT session истекла (HTTP " + r.code + ")");
-            if (r.code != 200)
+            if (r.code != 200) {
+                // The Library nodes backend can return a terminal 400/404/422 for the
+                // continuation cursor after all usable pages were already returned.
+                // Do not discard thousands of successfully enumerated items in that case.
+                if (pages > 0 && !merged.isEmpty() && isPaginationRejected(r.code)) break;
                 throw new java.io.IOException("ChatGPT Library nodes HTTP " + r.code);
+            }
 
             JSONObject root = new JSONObject(r.body);
             JSONArray items = root.optJSONArray("items");
