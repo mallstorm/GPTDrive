@@ -69,6 +69,8 @@ final class ChatGptResponseParser {
         f.messageId = firstStringDeep(o, "message_id", "messageId");
         f.assetPointer = firstStringDeep(o, "asset_pointer", "assetPointer");
         f.rawUrl = rawUrl;
+        f.width = (int) Math.min(Integer.MAX_VALUE, firstLongDeep(o, "width", "image_width", "imageWidth"));
+        f.height = (int) Math.min(Integer.MAX_VALUE, firstLongDeep(o, "height", "image_height", "imageHeight"));
         f.createdAt = firstTimeDeep(o, "created_at", "create_time", "createdAt", "uploaded_at", "uploadedAt");
         f.updatedAt = firstTimeDeep(o, "updated_at", "modified_at", "update_time", "updatedAt", "modifiedAt");
         if (f.updatedAt <= 0) f.updatedAt = f.createdAt;
