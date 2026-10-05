@@ -146,35 +146,30 @@ final class ChatGptProvider {
         return out;
     }
 
+    /** Archived metadata used by the current Archive surface. */
     List<ChatGptModels.RemoteConversation> loadArchived() throws Exception {
-        ArrayList<ChatGptModels.RemoteConversation> out = new ArrayList<>();
-        int offset = 0;
-        int limit = 100;
-        for (int page = 0; page < 100; page++) {
-            HttpResponse r = backend("GET", "/backend-api/conversations?offset=" + offset + "&limit=" + limit + "&order=updated&is_archived=true", null, true, true);
-            if (r.code == 401 || r.code == 403) throw new AuthException("ChatGPT session истекла (HTTP " + r.code + ")");
-            if (r.code != 200) break;
-            JSONObject root = new JSONObject(r.bodyUtf8());
-            JSONArray items = root.optJSONArray("items");
-            if (items == null || items.length() == 0) break;
-            for (int i = 0; i < items.length(); i++) {
-                JSONObject o = items.optJSONObject(i);
-                if (o == null) continue;
-                String id = ChatGptModels.first(o.optString("id", ""), o.optString("conversation_id", ""));
-                if (id.isEmpty()) continue;
-                ChatGptModels.RemoteConversation c = new ChatGptModels.RemoteConversation();
-                c.id = id;
-                c.title = ChatGptResponseParser.cleanName(ChatGptModels.first(o.optString("title", ""), "ChatGPT chat"));
-                c.archived = true;
-                c.updatedAt = epochMillis(o.opt("update_time"));
-                if (c.updatedAt <= 0) c.updatedAt = epochMillis(o.opt("updated_at"));
-                out.add(c);
-            }
-            int total = root.optInt("total", root.optInt("total_count", 0));
-            offset += items.length();
-            if (items.length() < limit || (total > 0 && offset >= total)) break;
-        }
-        return out;
+        return ChatGptConversationsApi.list(
+                ep -> backend("GET", ep, null, true, true),
+                ChatGptProvider::ensureConversationStatus,
+                true,
+                100);
+    }
+
+    /** All conversation summaries for the future Chat Mirror/indexer. */
+    List<ChatGptModels.RemoteConversation> loadConversations() throws Exception {
+        return ChatGptConversationsApi.list(
+                ep -> backend("GET", ep, null, true, true),
+                ChatGptProvider::ensureConversationStatus,
+                false,
+                500);
+    }
+
+    /** Full raw conversation mapping. No mapping nodes are discarded. */
+    ChatGptModels.RemoteConversation loadConversation(String conversationId) throws Exception {
+        return ChatGptConversationsApi.load(
+                ep -> backend("GET", ep, null, true, true),
+                ChatGptProvider::ensureConversationStatus,
+                conversationId);
     }
 
     String resolveDownload(String fileId, String conversationId) throws Exception {
@@ -267,20 +262,18 @@ final class ChatGptProvider {
         throw new ProviderException("ChatGPT Library HTTP " + r.code);
     }
 
+    private static void ensureConversationStatus(HttpResponse r) throws ProviderException {
+        if (r.code == 200) return;
+        if (r.code == 401 || r.code == 403)
+            throw new AuthException("ChatGPT conversations: сессия недоступна (HTTP " + r.code + ")");
+        if (r.code == 429)
+            throw new RateLimitException("ChatGPT временно ограничил Conversations (HTTP 429)");
+        throw new ProviderException("ChatGPT Conversations HTTP " + r.code);
+    }
+
     private static boolean isHttp(String value) {
         if (value == null) return false;
         String s = value.toLowerCase(Locale.ROOT);
         return s.startsWith("https://") || s.startsWith("http://");
-    }
-
-    private static long epochMillis(Object value) {
-        if (value == null || value == JSONObject.NULL) return 0;
-        try {
-            double n = value instanceof Number ? ((Number) value).doubleValue() : Double.parseDouble(value.toString());
-            if (n <= 0) return 0;
-            return n < 100000000000L ? (long) (n * 1000d) : (long) n;
-        } catch (Exception ignored) {
-            return 0;
-        }
     }
 }
