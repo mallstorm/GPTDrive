@@ -109,13 +109,7 @@ final class ChatGptSyncCoordinator {
         SQLiteDatabase sql = db.getWritableDatabase();
         sql.beginTransaction();
         try {
-            // Library is authoritative and is replaced only after the complete remote snapshot exists.
-            // Stable file row ids are preserved so open DocumentsProvider handles do not break.
-            // Rows owned by a failed sub-surface survive until that endpoint succeeds again.
             index.replaceFiles(sql, allFiles, preserveSources);
-
-            // Sub-surfaces commit only when their own fetch succeeded. A temporary endpoint failure
-            // therefore cannot zero a previously valid Projects/Archive index.
             if (projectsFresh) index.replaceProjects(sql, projects);
             if (archivedFresh) index.replaceArchived(sql, archived);
             sql.setTransactionSuccessful();
@@ -142,9 +136,9 @@ final class ChatGptSyncCoordinator {
         db.recordSyncState(accountId, "Archived", archivedFresh, archivedCount, archiveError,
                 archivedFresh ? "table=conversations" : "previous_snapshot_preserved=true");
 
-        // Chat Mirror is intentionally a separate, non-destructive surface. A Mirror failure must
-        // not roll back a valid Library/Images/Projects snapshot. Full conversation bodies are
-        // fetched incrementally to avoid turning a normal Drive sync into a multi-thousand-request job.
+        // Chat Mirror is a separate, non-destructive surface. A Mirror failure cannot roll back
+        // a valid Drive snapshot. Active conversations are combined with the already-fetched
+        // archived summaries so neither side of the ChatGPT history disappears from the mirror.
         boolean mirrorFresh = false;
         String mirrorError = "";
         int conversationCount = 0;
@@ -154,7 +148,7 @@ final class ChatGptSyncCoordinator {
         ChatMirrorRepository mirrorRepo = new ChatMirrorRepository(context, db, accountId);
         try {
             ChatMirrorSyncEngine.Result mr = new ChatMirrorSyncEngine(context, db, accountId, provider)
-                    .sync(ChatMirrorSyncEngine.DEFAULT_BODY_BUDGET, progress);
+                    .sync(archivedFresh ? archived : null, ChatMirrorSyncEngine.DEFAULT_BODY_BUDGET, progress);
             mirrorFresh = true;
             conversationCount = mr.summaries;
             mirroredChats = mr.stats.mirrored;
