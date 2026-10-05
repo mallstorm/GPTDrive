@@ -85,12 +85,17 @@ final class ChatGptSyncCoordinator {
         int imageCount = 0;
         for (ChatGptModels.RemoteFile f : allFiles) if (f.isImage()) imageCount++;
 
+        int preserveSources = 0;
+        if (!imagesFresh) preserveSources |= ChatGptModels.SRC_IMAGE_GEN;
+        if (!projectsFresh) preserveSources |= ChatGptModels.SRC_PROJECT;
+
         SQLiteDatabase sql = db.getWritableDatabase();
         sql.beginTransaction();
         try {
             // Library is authoritative and is replaced only after the complete remote snapshot exists.
             // Stable file row ids are preserved so open DocumentsProvider handles do not break.
-            index.replaceFiles(sql, allFiles);
+            // Rows owned by a failed sub-surface survive until that endpoint succeeds again.
+            index.replaceFiles(sql, allFiles, preserveSources);
 
             // Sub-surfaces commit only when their own fetch succeeded. A temporary endpoint failure
             // therefore cannot zero a previously valid Projects/Archive index.
@@ -108,7 +113,7 @@ final class ChatGptSyncCoordinator {
         db.recordSyncState(accountId, "Library", true, allFiles.size(), "",
                 "pages=" + library.pages + ";strategy=" + library.strategy);
         db.recordSyncState(accountId, "Images", imagesFresh, imageCount, imageError,
-                imagesFresh ? "merged=file_id" : "preserved_from_library=true");
+                imagesFresh ? "merged=file_id" : "previous_image_gen_rows_preserved=true");
 
         int projectCount = projectsFresh && projects != null
                 ? projects.size() : (int) db.count(accountId, "Projects");
