@@ -25,6 +25,8 @@ public final class NativeBrowserActivity extends Activity {
     public static final String EXTRA_CATEGORY="category";
     public static final String EXTRA_ACCOUNT_ID="account_id";
     private static final int GREEN=0xFF08A66D,GREEN_SOFT=0xFFE5F8F1,TEXT=0xFF101828,MUTED=0xFF667085,BG=0xFFF7F9FA;
+    private static final int IMAGE_PAGE=12;
+    private static final long AUTO_PREVIEW_MAX=1024L*1024L;
     private String category;
     private long accountId;
     private DriveDb db;
@@ -32,6 +34,7 @@ public final class NativeBrowserActivity extends Activity {
     private TextView summary;
     private EditText search;
     private List<DriveItem> all=new ArrayList<>();
+    private int imageRenderLimit=IMAGE_PAGE;
 
     @Override protected void onCreate(Bundle state){super.onCreate(state);db=new DriveDb(this);category=getIntent().getStringExtra(EXTRA_CATEGORY);if(category==null)category="Library";accountId=getIntent().getLongExtra(EXTRA_ACCOUNT_ID,db.activeAccountId());buildUi();}
     @Override protected void onResume(){super.onResume();reload();}
@@ -51,13 +54,13 @@ public final class NativeBrowserActivity extends Activity {
 
         search=new EditText(this);search.setSingleLine(true);search.setHint("Поиск в "+titleFor(category));search.setTextSize(12);search.setTextColor(TEXT);search.setHintTextColor(0xFF98A2B3);search.setPadding(dp(14),0,dp(14),0);search.setBackground(round(Color.WHITE,14,0xFFE1E5E8,1));
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(44));sp.setMargins(dp(14),0,dp(14),dp(9));root.addView(search,sp);
-        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){render();}public void afterTextChanged(Editable e){}});
+        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){imageRenderLimit=IMAGE_PAGE;render();}public void afterTextChanged(Editable e){}});
 
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setPadding(dp(14),0,dp(14),dp(22));scroll.addView(content,new ScrollView.LayoutParams(-1,-2));root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         setContentView(root);
     }
 
-    private void reload(){all=db.list(accountId,category,1000);long files=0;for(DriveItem x:all)if(!DriveActions.isLink(x))files++;summary.setText(all.size()+" объектов"+(files!=all.size()?" • "+files+" файлов":""));render();}
+    private void reload(){all=db.list(accountId,category,1000);imageRenderLimit=IMAGE_PAGE;long files=0;for(DriveItem x:all)if(!DriveActions.isLink(x))files++;summary.setText(all.size()+" объектов"+(files!=all.size()?" • "+files+" файлов":""));render();}
 
     private void render(){
         if(content==null)return;content.removeAllViews();String q=search==null?"":search.getText().toString().trim().toLowerCase();ArrayList<DriveItem> shown=new ArrayList<>();
@@ -66,9 +69,25 @@ public final class NativeBrowserActivity extends Activity {
     }
 
     private void renderImages(List<DriveItem> items){
+        ArrayList<DriveItem> images=new ArrayList<>();for(DriveItem x:items)if(DriveActions.isImage(x))images.add(x);
+        if(images.isEmpty()){empty();return;}
         GridLayout grid=new GridLayout(this);grid.setColumnCount(2);int w=(getResources().getDisplayMetrics().widthPixels-dp(40))/2;
-        for(DriveItem x:items){if(!DriveActions.isImage(x))continue;LinearLayout cell=new LinearLayout(this);cell.setOrientation(LinearLayout.VERTICAL);cell.setPadding(dp(5),dp(5),dp(5),dp(8));cell.setBackground(round(Color.WHITE,15,0xFFE4E8EB,1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setBackgroundColor(0xFFE9ECEF);cell.addView(image,new LinearLayout.LayoutParams(-1,dp(132)));TextView name=text(x.name,11,true);name.setMaxLines(2);name.setPadding(dp(4),dp(5),dp(4),0);cell.addView(name);cell.setOnClickListener(v->DriveActions.open(this,x));cell.setOnLongClickListener(v->{menu(v,x);return true;});GridLayout.LayoutParams gp=new GridLayout.LayoutParams();gp.width=w;gp.height=dp(180);gp.setMargins(dp(3),dp(3),dp(3),dp(3));grid.addView(cell,gp);ImageLoader.load(image,x.url);}
-        if(grid.getChildCount()==0){empty();return;}content.addView(grid);
+        int count=Math.min(imageRenderLimit,images.size());
+        for(int i=0;i<count;i++){
+            DriveItem x=images.get(i);LinearLayout cell=new LinearLayout(this);cell.setOrientation(LinearLayout.VERTICAL);cell.setPadding(dp(5),dp(5),dp(5),dp(8));cell.setBackground(round(Color.WHITE,15,0xFFE4E8EB,1));
+            ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setBackgroundColor(0xFFE9ECEF);cell.addView(image,new LinearLayout.LayoutParams(-1,dp(132)));
+            boolean autoPreview=x.sizeBytes<=0||x.sizeBytes<=AUTO_PREVIEW_MAX;
+            if(autoPreview)ImageLoader.load(image,accountId,x.url);else image.setOnClickListener(v->ImageLoader.load(image,accountId,x.url));
+            TextView name=text(x.name,11,true);name.setMaxLines(2);name.setPadding(dp(4),dp(5),dp(4),0);cell.addView(name);
+            cell.setOnClickListener(v->DriveActions.open(this,x));cell.setOnLongClickListener(v->{menu(v,x);return true;});
+            GridLayout.LayoutParams gp=new GridLayout.LayoutParams();gp.width=w;gp.height=dp(180);gp.setMargins(dp(3),dp(3),dp(3),dp(3));grid.addView(cell,gp);
+        }
+        content.addView(grid);
+        if(count<images.size()){
+            TextView more=text("Показать ещё "+Math.min(IMAGE_PAGE,images.size()-count)+" • превью загружаются по мере показа",11,true);more.setGravity(Gravity.CENTER);more.setTextColor(GREEN);more.setBackground(round(GREEN_SOFT,13,0,0));
+            more.setOnClickListener(v->{imageRenderLimit=Math.min(images.size(),imageRenderLimit+IMAGE_PAGE);render();});
+            LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(-1,dp(46));mp.setMargins(dp(3),dp(8),dp(3),0);content.addView(more,mp);
+        }
     }
 
     private void renderList(List<DriveItem> items){
