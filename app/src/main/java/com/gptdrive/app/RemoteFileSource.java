@@ -10,7 +10,7 @@ import java.util.Locale;
 /** Resolves stable file_id references to fresh signed URLs on every open. */
 final class RemoteFileSource {
     private static final String CHATGPT = "https://chatgpt.com";
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.8.0";
+    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.8.2";
 
     private RemoteFileSource() {}
 
