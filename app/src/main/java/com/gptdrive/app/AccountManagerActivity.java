@@ -20,9 +20,10 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Clean account switcher. Only successfully authorized ChatGPT accounts are shown. */
+/** Account switcher with official OAuth identity and separate Library Session JSON. */
 public final class AccountManagerActivity extends Activity {
     private static final String AUTHORITY = "com.gptdrive.app.documents";
+    private static final int MAX_ACCOUNTS = 20;
     private static final int GREEN = 0xFF08A66D;
     private static final int TEXT = 0xFF101828;
     private static final int MUTED = 0xFF667085;
@@ -37,10 +38,7 @@ public final class AccountManagerActivity extends Activity {
         buildUi();
     }
 
-    @Override protected void onResume() {
-        super.onResume();
-        render();
-    }
+    @Override protected void onResume() { super.onResume(); render(); }
 
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
@@ -55,7 +53,6 @@ public final class AccountManagerActivity extends Activity {
         back.setOnClickListener(v -> finish());
         bar.addView(back, new LinearLayout.LayoutParams(dp(40), dp(52)));
         TextView title = text("Аккаунты", 20, true);
-        title.setSingleLine(true);
         bar.addView(title, new LinearLayout.LayoutParams(0, dp(52), 1));
         root.addView(bar, new LinearLayout.LayoutParams(-1, dp(56)));
 
@@ -83,34 +80,29 @@ public final class AccountManagerActivity extends Activity {
         list.removeAllViews();
         List<AccountProfile> registered = registeredAccounts();
         for (AccountProfile a : registered) list.addView(row(a));
-
         if (registered.isEmpty()) {
-            TextView empty = text("Добавь ChatGPT аккаунт, чтобы открыть библиотеку.", 12, false);
-            empty.setTextColor(MUTED);
-            empty.setGravity(Gravity.CENTER);
-            list.addView(empty, new LinearLayout.LayoutParams(-1, dp(100)));
+            TextView empty = text("Подключи ChatGPT через системный браузер или импортируй Session JSON для Library.", 12, false);
+            empty.setTextColor(MUTED); empty.setGravity(Gravity.CENTER);
+            list.addView(empty, new LinearLayout.LayoutParams(-1, dp(110)));
         }
-
-        if (registered.size() >= ChatGptAuthActivity.MAX_ACCOUNTS) {
-            addButton.setText("Достигнут лимит: 20 аккаунтов");
-            addButton.setTextColor(MUTED);
+        if (registered.size() >= MAX_ACCOUNTS) {
+            addButton.setText("Достигнут лимит: 20 аккаунтов"); addButton.setTextColor(MUTED);
         } else {
-            addButton.setText("＋  Добавить аккаунт");
-            addButton.setTextColor(GREEN);
+            addButton.setText("＋  Добавить аккаунт"); addButton.setTextColor(GREEN);
         }
     }
 
     private List<AccountProfile> registeredAccounts() {
         ArrayList<AccountProfile> out = new ArrayList<>();
         for (AccountProfile a : db.listAccounts()) {
-            // Only a confirmed ChatGPT identity counts as a registered account.
-            // Anonymous cookies from the login page must never create a card.
-            if (a.email != null && !a.email.trim().isEmpty()) out.add(a);
+            if ((a.email != null && !a.email.trim().isEmpty()) || ChatGptOAuthStore.has(this, a.id) || ChatGptSessionStore.has(this, a.id)) out.add(a);
         }
         return out;
     }
 
     private View row(AccountProfile a) {
+        boolean oauth = ChatGptOAuthStore.has(this, a.id);
+        boolean library = ChatGptSessionStore.has(this, a.id);
         LinearLayout card = new LinearLayout(this);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(12), dp(8), dp(8), dp(8));
@@ -124,139 +116,119 @@ public final class AccountManagerActivity extends Activity {
         card.addView(avatar, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         LinearLayout info = new LinearLayout(this);
-        info.setOrientation(LinearLayout.VERTICAL);
-        info.setGravity(Gravity.CENTER_VERTICAL);
-        info.setPadding(dp(10), 0, dp(6), 0);
-        TextView name = text(a.displayName(), 14, true);
-        name.setSingleLine(true);
-        TextView email = text(a.email == null ? "" : a.email, 10, false);
-        email.setTextColor(MUTED);
-        email.setSingleLine(true);
-        String status = a.active ? "Активен" : "Готов к переключению";
-        TextView plan = text(a.planLabel() + "  •  " + status, 10, true);
-        plan.setTextColor(a.active ? GREEN : MUTED);
-        info.addView(name);
-        if (!email.getText().toString().isEmpty()) info.addView(email);
-        info.addView(plan);
-        card.addView(info, new LinearLayout.LayoutParams(0, dp(54), 1));
+        info.setOrientation(LinearLayout.VERTICAL); info.setGravity(Gravity.CENTER_VERTICAL); info.setPadding(dp(10), 0, dp(6), 0);
+        TextView name = text(a.displayName(), 14, true); name.setSingleLine(true);
+        String state = (oauth ? "OAuth ✓" : "OAuth —") + "  ·  " + (library ? "Library ✓" : "Library —");
+        TextView status = text(state, 10, true); status.setTextColor(library ? GREEN : MUTED); status.setSingleLine(true);
+        TextView plan = text((a.plan == null || a.plan.trim().isEmpty() ? "ChatGPT" : a.planLabel()) + (a.active ? "  •  Активен" : ""), 10, false);
+        plan.setTextColor(MUTED); plan.setSingleLine(true);
+        info.addView(name); info.addView(status); info.addView(plan);
+        card.addView(info, new LinearLayout.LayoutParams(0, dp(56), 1));
 
-        TextView action = text(a.hasSession() ? (a.active ? "Активен" : "Выбрать") : "Войти", 11, true);
+        TextView action = text(a.active ? "Активен" : "Выбрать", 11, true);
         action.setGravity(Gravity.CENTER);
-        boolean disabled = a.active && a.hasSession();
-        action.setTextColor(disabled ? MUTED : Color.WHITE);
-        action.setBackground(round(disabled ? 0xFFF0F2F4 : GREEN, 11, 0, 0));
-        action.setEnabled(!disabled);
-        action.setOnClickListener(v -> {
-            if (!a.hasSession()) authorizeExisting(a);
-            else if (!a.active) select(a);
-        });
+        action.setTextColor(a.active ? MUTED : Color.WHITE);
+        action.setBackground(round(a.active ? 0xFFF0F2F4 : GREEN, 11, 0, 0));
+        action.setEnabled(!a.active);
+        action.setOnClickListener(v -> select(a));
         card.addView(action, new LinearLayout.LayoutParams(dp(76), dp(36)));
 
-        TextView more = text("⋮", 20, false);
-        more.setGravity(Gravity.CENTER);
-        more.setOnClickListener(v -> menu(v, a));
+        TextView more = text("⋮", 20, false); more.setGravity(Gravity.CENTER); more.setOnClickListener(v -> menu(v, a));
         card.addView(more, new LinearLayout.LayoutParams(dp(28), dp(40)));
-        if (!a.active && a.hasSession()) card.setOnClickListener(v -> select(a));
+        if (!a.active) card.setOnClickListener(v -> select(a));
 
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(74));
-        p.setMargins(0, 0, 0, dp(7));
-        card.setLayoutParams(p);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(76)); p.setMargins(0, 0, 0, dp(7)); card.setLayoutParams(p);
         return card;
     }
 
     private void addAccount() {
-        if (registeredAccounts().size() >= ChatGptAuthActivity.MAX_ACCOUNTS) {
-            Toast.makeText(this, "Можно подключить не более 20 аккаунтов", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        // Pending row is hidden from this screen and is removed automatically if
-        // the user cancels authorization.
-        long id = db.addAccount("Новый аккаунт");
-        Intent i = new Intent(this, ChatGptAuthActivity.class);
-        i.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, id);
-        i.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, true);
+        if (registeredAccounts().size() >= MAX_ACCOUNTS) { Toast.makeText(this, "Можно подключить не более 20 аккаунтов", Toast.LENGTH_SHORT).show(); return; }
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Подключение ChatGPT")
+                .setItems(new String[]{"Продолжить с ChatGPT — системный браузер", "Session JSON для Library — экспериментально"}, (d, which) -> {
+                    if (which == 0) startNewOAuth(); else startNewSessionImport();
+                }).show();
+    }
+
+    private long newPlaceholder() { return db.addAccount("Новый аккаунт"); }
+
+    private void startNewOAuth() {
+        long id = newPlaceholder();
+        Intent i = new Intent(this, ChatGptOAuthActivity.class);
+        i.putExtra(ChatGptOAuthActivity.EXTRA_ACCOUNT_ID, id);
+        i.putExtra(ChatGptOAuthActivity.EXTRA_NEW_ACCOUNT, true);
         startActivity(i);
     }
 
-    private void authorizeExisting(AccountProfile a) {
-        Intent i = new Intent(this, ChatGptAuthActivity.class);
-        i.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, a.id);
-        i.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, false);
+    private void startNewSessionImport() {
+        long id = newPlaceholder();
+        Intent i = new Intent(this, SessionImportActivity.class);
+        i.putExtra(SessionImportActivity.EXTRA_ACCOUNT_ID, id);
+        i.putExtra(SessionImportActivity.EXTRA_NEW_ACCOUNT, true);
+        startActivity(i);
+    }
+
+    private void oauthExisting(AccountProfile a) {
+        Intent i = new Intent(this, ChatGptOAuthActivity.class);
+        i.putExtra(ChatGptOAuthActivity.EXTRA_ACCOUNT_ID, a.id);
+        i.putExtra(ChatGptOAuthActivity.EXTRA_NEW_ACCOUNT, false);
+        startActivity(i);
+    }
+
+    private void importSession(AccountProfile a) {
+        Intent i = new Intent(this, SessionImportActivity.class);
+        i.putExtra(SessionImportActivity.EXTRA_ACCOUNT_ID, a.id);
+        i.putExtra(SessionImportActivity.EXTRA_NEW_ACCOUNT, false);
         startActivity(i);
     }
 
     private void select(AccountProfile a) {
-        AccountSession.switchTo(this, a.id, () -> {
-            notifyRoots();
-            Toast.makeText(this, "Переключено: " + a.displayName(), Toast.LENGTH_SHORT).show();
-            render();
-        });
+        db.setActiveAccount(a.id); notifyRoots();
+        Toast.makeText(this, "Переключено: " + a.displayName(), Toast.LENGTH_SHORT).show(); render();
     }
 
     private void menu(View anchor, AccountProfile a) {
         LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(5), dp(5), dp(5), dp(5));
+        panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(dp(5), dp(5), dp(5), dp(5));
         panel.setBackground(round(Color.WHITE, 12, 0xFFE4E8EB, 1));
+        PopupWindow w = new PopupWindow(panel, dp(230), -2, true);
+        panel.setTag(w); w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT)); w.setOutsideTouchable(true); w.setElevation(dp(10));
 
         if (!a.active) {
-            TextView choose = popupAction(a.hasSession() ? "Сделать активным" : "Войти");
-            panel.addView(choose, new LinearLayout.LayoutParams(-1, dp(42)));
-            choose.setOnClickListener(v -> {
-                PopupWindow p = findPopup(panel);
-                if (p != null) p.dismiss();
-                if (a.hasSession()) select(a); else authorizeExisting(a);
-            });
+            TextView choose = popupAction("Сделать активным"); panel.addView(choose, new LinearLayout.LayoutParams(-1, dp(42)));
+            choose.setOnClickListener(v -> { w.dismiss(); select(a); });
         }
-        TextView del = popupAction("Удалить аккаунт");
-        del.setTextColor(0xFFD92D20);
-        panel.addView(del, new LinearLayout.LayoutParams(-1, dp(42)));
+        TextView oauth = popupAction(ChatGptOAuthStore.has(this, a.id) ? "Обновить вход ChatGPT" : "Продолжить с ChatGPT");
+        panel.addView(oauth, new LinearLayout.LayoutParams(-1, dp(42)));
+        oauth.setOnClickListener(v -> { w.dismiss(); oauthExisting(a); });
 
-        PopupWindow w = new PopupWindow(panel, dp(190), -2, true);
-        panel.setTag(w);
-        w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        w.setOutsideTouchable(true);
-        w.setElevation(dp(10));
+        TextView session = popupAction(ChatGptSessionStore.has(this, a.id) ? "Обновить Session JSON" : "Подключить Library Session");
+        panel.addView(session, new LinearLayout.LayoutParams(-1, dp(42)));
+        session.setOnClickListener(v -> { w.dismiss(); importSession(a); });
+
+        TextView del = popupAction("Удалить аккаунт"); del.setTextColor(0xFFD92D20);
+        panel.addView(del, new LinearLayout.LayoutParams(-1, dp(42)));
         del.setOnClickListener(v -> {
             w.dismiss();
-            if (a.active) Toast.makeText(this, "Сначала переключись на другой аккаунт", Toast.LENGTH_SHORT).show();
-            else if (db.deleteAccount(a.id)) { notifyRoots(); render(); }
+            if (a.active) { Toast.makeText(this, "Сначала переключись на другой аккаунт", Toast.LENGTH_SHORT).show(); return; }
+            ChatGptOAuthStore.clear(this, a.id); ChatGptSessionStore.clear(this, a.id);
+            if (db.deleteAccount(a.id)) { notifyRoots(); render(); }
         });
-        w.showAsDropDown(anchor, anchor.getWidth() - dp(190), -dp(2));
-    }
-
-    private PopupWindow findPopup(View panel) {
-        Object tag = panel.getTag();
-        return tag instanceof PopupWindow ? (PopupWindow) tag : null;
+        w.showAsDropDown(anchor, anchor.getWidth() - dp(230), -dp(2));
     }
 
     private TextView popupAction(String s) {
-        TextView t = text(s, 12, false);
-        t.setGravity(Gravity.CENTER_VERTICAL);
-        t.setPadding(dp(12), 0, dp(12), 0);
-        return t;
+        TextView t = text(s, 12, false); t.setGravity(Gravity.CENTER_VERTICAL); t.setPadding(dp(12), 0, dp(12), 0); return t;
     }
 
-    private void notifyRoots() {
-        try { getContentResolver().notifyChange(DocumentsContract.buildRootsUri(AUTHORITY), null); }
-        catch (Exception ignored) {}
-    }
+    private void notifyRoots() { try { getContentResolver().notifyChange(DocumentsContract.buildRootsUri(AUTHORITY), null); } catch (Exception ignored) {} }
 
     private TextView text(String s, int sp, boolean bold) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextSize(sp);
-        t.setTextColor(TEXT);
-        if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        return t;
+        TextView t = new TextView(this); t.setText(s); t.setTextSize(sp); t.setTextColor(TEXT); if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return t;
     }
 
     private GradientDrawable round(int color, int radius, int stroke, int strokeDp) {
-        GradientDrawable g = new GradientDrawable();
-        g.setColor(color);
-        g.setCornerRadius(dp(radius));
-        if (strokeDp > 0) g.setStroke(dp(strokeDp), stroke);
-        return g;
+        GradientDrawable g = new GradientDrawable(); g.setColor(color); g.setCornerRadius(dp(radius)); if (strokeDp > 0) g.setStroke(dp(strokeDp), stroke); return g;
     }
 
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
