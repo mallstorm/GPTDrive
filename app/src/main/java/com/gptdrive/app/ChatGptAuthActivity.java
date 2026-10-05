@@ -19,13 +19,14 @@ import org.json.JSONObject;
 import java.util.List;
 import java.util.Locale;
 
-/** Clean in-app ChatGPT authorization flow. */
+/** In-app ChatGPT authorization with reuse of the existing GPT Drive WebView session. */
 public final class ChatGptAuthActivity extends Activity {
     public static final String EXTRA_ACCOUNT_ID = "account_id";
     public static final String EXTRA_NEW_ACCOUNT = "new_account";
     public static final int MAX_ACCOUNTS = 20;
     private static final String AUTHORITY = "com.gptdrive.app.documents";
     private static final String CHATGPT = "https://chatgpt.com";
+    private static final String SESSION = "https://chatgpt.com/api/auth/session";
     private static final String AUTH = "https://auth.openai.com";
     private static final String FILES = "https://files.oaiusercontent.com";
 
@@ -39,6 +40,7 @@ public final class ChatGptAuthActivity extends Activity {
     private boolean closing;
     private boolean freshStarted;
     private boolean decisionOpen;
+    private boolean loginOpened;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -68,7 +70,9 @@ public final class ChatGptAuthActivity extends Activity {
         s.setJavaScriptCanOpenWindowsAutomatically(true);
         s.setSupportMultipleWindows(false);
         s.setMediaPlaybackRequiresUserGesture(true);
-        s.setUserAgentString("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.4");
+        // Keep the auth UA browser-like. Extra application tokens can make some
+        // identity/anti-bot paths behave differently from the user's normal login.
+        s.setUserAgentString("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36");
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
@@ -80,48 +84,94 @@ public final class ChatGptAuthActivity extends Activity {
             @Override public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
-                if (url != null && url.toLowerCase(Locale.ROOT).contains("chatgpt.com")) {
-                    checkSessionSoon(200);
-                    checkSessionSoon(1000);
-                    checkSessionSoon(2200);
+                String u = url == null ? "" : url.toLowerCase(Locale.ROOT);
+                if (u.contains("chatgpt.com/api/auth/session")) {
+                    captureSessionDocument();
+                    return;
+                }
+                if (u.contains("chatgpt.com")) {
+                    checkSessionSoon(150);
+                    checkSessionSoon(700);
+                    checkSessionSoon(1600);
                 }
             }
         });
         setContentView(web);
     }
 
+    /**
+     * Important: never clear the live WebView cookie jar before trying it.
+     * v0.6.3/v0.6.4 could wipe a perfectly valid session after a 3.2s timeout.
+     */
     private void prepareQuickLogin() {
         if (previousActiveId > 0) AccountSession.snapshot(this, previousActiveId);
+
+        CookieManager cm = CookieManager.getInstance();
+        String live = cm.getCookie(CHATGPT);
+        if (live != null && !live.trim().isEmpty()) {
+            probeSession();
+            return;
+        }
+
         long quickId = newAccount ? previousActiveId : targetId;
         if (quickId > 0 && db.accountById(quickId) != null) {
             AccountSession.switchTo(this, quickId, () -> {
                 if (web == null || isFinishing()) return;
-                web.loadUrl("https://chatgpt.com/");
-                checkSessionSoon(150);
-                checkSessionSoon(650);
-                checkSessionSoon(1500);
-                handler.postDelayed(() -> {
-                    if (!authorized && !decisionOpen && !freshStarted) startFreshLogin();
-                }, 3200);
+                probeSession();
             });
-        } else {
-            startFreshLogin();
+            return;
         }
+
+        // No reusable GPT Drive WebView session exists. Open login without first
+        // deleting cookies; login providers may still have useful state.
+        openLoginPreservingSession();
     }
 
+    /** Probe /api/auth/session directly so a valid existing WebView session is picked up immediately. */
+    private void probeSession() {
+        if (authorized || closing || web == null || isFinishing()) return;
+        loginOpened = false;
+        web.loadUrl(SESSION);
+        handler.postDelayed(() -> {
+            if (!authorized && !decisionOpen && !freshStarted && !loginOpened) {
+                openLoginPreservingSession();
+            }
+        }, 8000);
+    }
+
+    /** Do not erase cookies on an automatic fallback. */
+    private void openLoginPreservingSession() {
+        if (authorized || closing || web == null || isFinishing() || loginOpened) return;
+        loginOpened = true;
+        web.loadUrl("https://chatgpt.com/auth/login");
+    }
+
+    /** Only an explicit request for another account is allowed to clear the current cookie jar. */
     private void startFreshLogin() {
         if (freshStarted || authorized || closing) return;
         freshStarted = true;
         decisionOpen = false;
+        loginOpened = true;
         AccountSession.startFresh(this, targetId, () -> {
             if (!isFinishing() && web != null) web.loadUrl("https://chatgpt.com/auth/login");
         });
     }
 
+    private void captureSessionDocument() {
+        if (authorized || closing || web == null) return;
+        String js = "(function(){try{var t=(document.body&&document.body.innerText)||document.documentElement.innerText||'';" +
+                "if(t){GPTDriveAuth.onSession(t)}}catch(e){}})();";
+        web.evaluateJavascript(js, null);
+        // Some WebView builds wrap JSON in a viewer. A same-origin fetch is the
+        // secondary path and uses the exact same live cookie jar.
+        checkSessionSoon(100);
+        checkSessionSoon(500);
+    }
+
     private void checkSessionSoon(long delayMs) {
         handler.postDelayed(() -> {
             if (authorized || closing || web == null) return;
-            String js = "(function(){try{fetch('/api/auth/session',{credentials:'include'})" +
+            String js = "(function(){try{fetch('https://chatgpt.com/api/auth/session',{credentials:'include'})" +
                     ".then(r=>r.text()).then(t=>{try{GPTDriveAuth.onSession(t)}catch(e){}}).catch(()=>{});}catch(e){}})();";
             web.evaluateJavascript(js, null);
         }, delayMs);
@@ -131,18 +181,29 @@ public final class ChatGptAuthActivity extends Activity {
         @JavascriptInterface public void onSession(String json) {
             if (authorized || closing || json == null || json.trim().isEmpty() || "null".equals(json.trim())) return;
             try {
-                JSONObject root = new JSONObject(json);
+                String raw = normalizeJson(json);
+                JSONObject root = new JSONObject(raw);
                 JSONObject user = root.optJSONObject("user");
                 String email = user == null ? "" : user.optString("email", "").trim();
                 String name = user == null ? "" : user.optString("name", "").trim();
                 String accessToken = root.optString("accessToken", "").trim();
                 if (email.isEmpty() && accessToken.isEmpty()) return;
                 runOnUiThread(() -> {
-                    if (newAccount && !freshStarted) showQuickAccountChoice(json, name, email);
-                    else { authorized = true; completeAuthorization(json, name, email); }
+                    if (newAccount && !freshStarted) showQuickAccountChoice(raw, name, email);
+                    else { authorized = true; completeAuthorization(raw, name, email); }
                 });
             } catch (Exception ignored) {}
         }
+    }
+
+    private static String normalizeJson(String s) {
+        if (s == null) return "";
+        String v = s.trim();
+        if (v.startsWith("\"") && v.endsWith("\"") && v.length() > 1) {
+            try { return new org.json.JSONTokener(v).nextValue().toString(); }
+            catch (Exception ignored) {}
+        }
+        return v;
     }
 
     private void showQuickAccountChoice(String json, String name, String email) {
@@ -150,15 +211,15 @@ public final class ChatGptAuthActivity extends Activity {
         decisionOpen = true;
         String who = email == null || email.trim().isEmpty() ? "текущий ChatGPT аккаунт" : email.trim();
         new android.app.AlertDialog.Builder(this)
-                .setTitle("Быстрый вход")
-                .setMessage("Продолжить как " + who + "?")
-                .setPositiveButton("Продолжить", (d, w) -> {
+                .setTitle("Найдена активная сессия")
+                .setMessage("Подключить " + who + " без повторного входа?")
+                .setPositiveButton("Подключить", (d, w) -> {
                     decisionOpen = false; authorized = true; completeAuthorization(json, name, email);
                 })
                 .setNegativeButton("Другой аккаунт", (d, w) -> {
                     decisionOpen = false; startFreshLogin();
                 })
-                .setOnCancelListener(d -> { decisionOpen = false; startFreshLogin(); })
+                .setOnCancelListener(d -> { decisionOpen = false; })
                 .show();
     }
 
@@ -221,13 +282,16 @@ public final class ChatGptAuthActivity extends Activity {
     private void restorePreviousCookies() {
         CookieManager cm = CookieManager.getInstance();
         AccountProfile previous = previousActiveId > 0 ? db.accountById(previousActiveId) : null;
+        if (previous == null) {
+            cm.flush();
+            notifyRoots();
+            return;
+        }
         cm.removeAllCookies(ok -> {
-            if (previous != null) {
-                restoreHeader(cm, CHATGPT, previous.cookieChatgpt);
-                restoreHeader(cm, AUTH, previous.cookieAuth);
-                restoreHeader(cm, FILES, previous.cookieFiles);
-                db.setActiveAccount(previous.id);
-            }
+            restoreHeader(cm, CHATGPT, previous.cookieChatgpt);
+            restoreHeader(cm, AUTH, previous.cookieAuth);
+            restoreHeader(cm, FILES, previous.cookieFiles);
+            db.setActiveAccount(previous.id);
             cm.flush();
             notifyRoots();
         });
