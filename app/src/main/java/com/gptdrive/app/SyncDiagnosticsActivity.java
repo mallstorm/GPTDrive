@@ -11,10 +11,12 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
-/** Compact diagnostics for auth, normalized index, Smart DNS and per-surface sync state. */
+/** Compact diagnostics for auth, normalized index, Smart DNS and redacted transport state. */
 public final class SyncDiagnosticsActivity extends Activity {
     public static final String EXTRA_ACCOUNT_ID = "account_id";
     private static final int GREEN = 0xFF08A66D;
@@ -114,6 +116,21 @@ public final class SyncDiagnosticsActivity extends Activity {
             if (r.httpMs >= 0) value += " · HTTP " + r.httpMs + " ms";
             if (!empty(r.error)) value += " · " + r.error;
             addRow(r.selected ? "Текущий DNS" : "Резерв", value, r.ok || r.selected);
+        }
+
+        addSection("HTTP transport");
+        List<NetworkTraceStore.Event> events = NetworkTraceStore.recent(12);
+        if (events.isEmpty()) {
+            addRow("Запросы", "В этой сессии ещё нет сетевой диагностики", false);
+        } else {
+            for (NetworkTraceStore.Event e : events) {
+                boolean ok = e.status >= 200 && e.status < 400 && empty(e.error);
+                String state = e.status > 0 ? "HTTP " + e.status : "network error";
+                String value = e.method + " " + e.target + "\n" + state + " · " + e.durationMs + " ms · попытка " + e.attempt;
+                if (!empty(e.route)) value += " · " + e.route;
+                if (!empty(e.error)) value += "\n" + e.error;
+                addRow(new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date(e.time)), value, ok);
+            }
         }
     }
 
