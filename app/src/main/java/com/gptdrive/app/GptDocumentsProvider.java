@@ -14,6 +14,7 @@ import java.io.OutputStream;
 public final class GptDocumentsProvider extends DocumentsProvider {
     private static final String ROOT = "gptdrive";
     private static final String[] CATS = {"Library", "Images", "Projects", "Archived"};
+    private static final int MAX_RESULTS = 10000;
     private DriveDb db;
 
     @Override public boolean onCreate() {
@@ -58,7 +59,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         }
         if (parent.startsWith("dir:")) {
             DirRef d = parseDir(parent);
-            for (DriveItem x : db.listFiles(d.accountId, d.category, 1000)) addFile(c, x);
+            for (DriveItem x : db.listFiles(d.accountId, d.category, MAX_RESULTS)) addFile(c, x);
             return c;
         }
         throw new FileNotFoundException(parent);
@@ -69,9 +70,10 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         long accountId = db.activeAccountId();
         String q = query == null ? "" : query.toLowerCase();
         if (accountId <= 0) return c;
+        java.util.HashSet<Long> seen = new java.util.HashSet<>();
         for (String cat : CATS) {
-            for (DriveItem x : db.listFiles(accountId, cat, 1000)) {
-                if (x.name.toLowerCase().contains(q)) addFile(c, x);
+            for (DriveItem x : db.listFiles(accountId, cat, MAX_RESULTS)) {
+                if (x.name != null && x.name.toLowerCase().contains(q) && seen.add(x.id)) addFile(c, x);
             }
         }
         return c;
