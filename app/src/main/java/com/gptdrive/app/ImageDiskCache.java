@@ -10,10 +10,10 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Disk cache keyed only by stable account + file reference; signed URLs are never persisted. */
+/** Small on-demand preview cache. It is not an offline mirror of the user's cloud. */
 final class ImageDiskCache {
-    private static final long MAX_BYTES = 160L * 1024L * 1024L;
-    private static final long TARGET_BYTES = 120L * 1024L * 1024L;
+    private static final long MAX_BYTES = 40L * 1024L * 1024L;
+    private static final long TARGET_BYTES = 24L * 1024L * 1024L;
     private static final ConcurrentHashMap<String, Object> LOCKS = new ConcurrentHashMap<>();
 
     private ImageDiskCache() {}
@@ -26,6 +26,8 @@ final class ImageDiskCache {
         File dir = new File(app.getCacheDir(), "gptdrive-images");
         if (!dir.exists() && !dir.mkdirs() && !dir.isDirectory())
             throw new java.io.IOException("Не удалось создать image cache");
+        // Also trims oversized caches produced by older builds before another preview is fetched.
+        prune(dir);
         File dst = new File(dir, digest + ".bin");
         if (dst.isFile() && dst.length() > 0) {
             dst.setLastModified(System.currentTimeMillis());
