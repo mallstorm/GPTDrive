@@ -105,7 +105,7 @@ public final class BrowserActivity extends Activity {
         s.setDatabaseEnabled(true);
         s.setLoadsImagesAutomatically(true);
         s.setMediaPlaybackRequiresUserGesture(true);
-        s.setUserAgentString(s.getUserAgentString() + " GPTDrive/0.6.0");
+        s.setUserAgentString(s.getUserAgentString() + " GPTDrive/0.6.1");
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(view, true);

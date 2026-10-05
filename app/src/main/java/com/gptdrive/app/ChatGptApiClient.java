@@ -36,7 +36,7 @@ final class ChatGptApiClient {
     static final class AuthException extends Exception { AuthException(String message) { super(message); } }
 
     private static final String BASE = "https://chatgpt.com";
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.0";
+    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.6.1";
     private static final Pattern FILE_ID = Pattern.compile("(file[-_][A-Za-z0-9_-]{6,})", Pattern.CASE_INSENSITIVE);
 
     private final Context context;
@@ -112,6 +112,7 @@ final class ChatGptApiClient {
         PageRequest request = new PageRequest("/backend-api/files/library", "{}");
         while (pages < maxPages) {
             Response r = request("POST", request.endpoint, request.payload);
+            if (pages > 0 && !merged.isEmpty() && isPaginationRejected(r.code)) break;
             ensureLibraryStatus(r);
             Page page = decodeLibraryPage(r.body);
             pages++;
@@ -121,7 +122,7 @@ final class ChatGptApiClient {
             if ((!page.hasMore && page.nextCursor.isEmpty()) || pages >= maxPages) break;
             String next = page.nextCursor;
             if (next.isEmpty()) { strategy = 5; request = libraryRequestForStrategy(strategy, "", merged.size()); continue; }
-            if (seenCursors.contains(next)) throw new java.io.IOException("Library pagination cursor зациклился");
+            if (seenCursors.contains(next)) break;
             seenCursors.add(next);
             if (strategy >= 0) { request = libraryRequestForStrategy(strategy, next, merged.size()); continue; }
 
@@ -248,6 +249,10 @@ final class ChatGptApiClient {
         return sb.toString();
     }
 
+    private static boolean isPaginationRejected(int code) {
+        return code == 400 || code == 404 || code == 405 || code == 422;
+    }
+
     private static void ensureLibraryStatus(Response r) throws Exception {
         if (r.code == 200) return;
         if (r.code == 401 || r.code == 403) throw new AuthException("ChatGPT session истекла (HTTP " + r.code + ")");
@@ -260,8 +265,11 @@ final class ChatGptApiClient {
         try {
             Object root = parseJson(body); if (root != null) walkFiles(root, files, 0);
             if (root instanceof JSONObject) {
-                JSONObject o = (JSONObject) root; nextCursor = findString(o, 0, "next_cursor", "nextCursor", "next_page_cursor", "nextPageCursor");
-                if (nextCursor.isEmpty()) nextCursor = o.optString("cursor", "").trim(); hasMore = findBoolean(o, 0, "has_more", "hasMore", "more") || !nextCursor.isEmpty();
+                JSONObject o = (JSONObject) root;
+                boolean explicitMore = findBoolean(o, 0, "has_more", "hasMore", "more");
+                nextCursor = findString(o, 0, "next_cursor", "nextCursor", "next_page_cursor", "nextPageCursor");
+                if (nextCursor.isEmpty() && explicitMore) nextCursor = o.optString("cursor", "").trim();
+                hasMore = explicitMore || !nextCursor.isEmpty();
             }
         } catch (Exception ignored) {}
         return new Page(new ArrayList<>(files.values()), nextCursor, hasMore);
