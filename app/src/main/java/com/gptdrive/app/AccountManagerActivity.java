@@ -20,7 +20,7 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Account switcher with official OAuth identity and separate Library Session JSON. */
+/** Account switcher with ChatGPT session login and optional separate OAuth identity. */
 public final class AccountManagerActivity extends Activity {
     private static final String AUTHORITY = "com.gptdrive.app.documents";
     private static final int MAX_ACCOUNTS = 20;
@@ -81,7 +81,7 @@ public final class AccountManagerActivity extends Activity {
         List<AccountProfile> registered = registeredAccounts();
         for (AccountProfile a : registered) list.addView(row(a));
         if (registered.isEmpty()) {
-            TextView empty = text("Подключи ChatGPT через системный браузер или импортируй Session JSON для Library.", 12, false);
+            TextView empty = text("Войди в ChatGPT во встроенном окне или импортируй Session JSON для Library.", 12, false);
             empty.setTextColor(MUTED); empty.setGravity(Gravity.CENTER);
             list.addView(empty, new LinearLayout.LayoutParams(-1, dp(110)));
         }
@@ -118,7 +118,7 @@ public final class AccountManagerActivity extends Activity {
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL); info.setGravity(Gravity.CENTER_VERTICAL); info.setPadding(dp(10), 0, dp(6), 0);
         TextView name = text(a.displayName(), 14, true); name.setSingleLine(true);
-        String state = (oauth ? "OAuth ✓" : "OAuth —") + "  ·  " + (library ? "Library ✓" : "Library —");
+        String state = (library ? "ChatGPT ✓" : "ChatGPT —") + "  ·  " + (library ? "Library ✓" : "Library —") + (oauth ? "  ·  OAuth ✓" : "");
         TextView status = text(state, 10, true); status.setTextColor(library ? GREEN : MUTED); status.setSingleLine(true);
         TextView plan = text((a.plan == null || a.plan.trim().isEmpty() ? "ChatGPT" : a.planLabel()) + (a.active ? "  •  Активен" : ""), 10, false);
         plan.setTextColor(MUTED); plan.setSingleLine(true);
@@ -145,18 +145,18 @@ public final class AccountManagerActivity extends Activity {
         if (registeredAccounts().size() >= MAX_ACCOUNTS) { Toast.makeText(this, "Можно подключить не более 20 аккаунтов", Toast.LENGTH_SHORT).show(); return; }
         new android.app.AlertDialog.Builder(this)
                 .setTitle("Подключение ChatGPT")
-                .setItems(new String[]{"Продолжить с ChatGPT — системный браузер", "Session JSON для Library — экспериментально"}, (d, which) -> {
-                    if (which == 0) startNewOAuth(); else startNewSessionImport();
+                .setItems(new String[]{"Войти в ChatGPT — встроенное окно", "Session JSON для Library — вручную"}, (d, which) -> {
+                    if (which == 0) startNewChatGptSession(); else startNewSessionImport();
                 }).show();
     }
 
     private long newPlaceholder() { return db.addAccount("Новый аккаунт"); }
 
-    private void startNewOAuth() {
+    private void startNewChatGptSession() {
         long id = newPlaceholder();
-        Intent i = new Intent(this, ChatGptOAuthActivity.class);
-        i.putExtra(ChatGptOAuthActivity.EXTRA_ACCOUNT_ID, id);
-        i.putExtra(ChatGptOAuthActivity.EXTRA_NEW_ACCOUNT, true);
+        Intent i = new Intent(this, ChatGptAuthActivity.class);
+        i.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, id);
+        i.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, true);
         startActivity(i);
     }
 
@@ -168,10 +168,10 @@ public final class AccountManagerActivity extends Activity {
         startActivity(i);
     }
 
-    private void oauthExisting(AccountProfile a) {
-        Intent i = new Intent(this, ChatGptOAuthActivity.class);
-        i.putExtra(ChatGptOAuthActivity.EXTRA_ACCOUNT_ID, a.id);
-        i.putExtra(ChatGptOAuthActivity.EXTRA_NEW_ACCOUNT, false);
+    private void loginExisting(AccountProfile a) {
+        Intent i = new Intent(this, ChatGptAuthActivity.class);
+        i.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, a.id);
+        i.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, false);
         startActivity(i);
     }
 
@@ -204,9 +204,9 @@ public final class AccountManagerActivity extends Activity {
             TextView choose = popupAction("Сделать активным"); panel.addView(choose, new LinearLayout.LayoutParams(-1, dp(42)));
             choose.setOnClickListener(v -> { w.dismiss(); select(a); });
         }
-        TextView oauth = popupAction(ChatGptOAuthStore.has(this, a.id) ? "Обновить вход ChatGPT" : "Продолжить с ChatGPT");
-        panel.addView(oauth, new LinearLayout.LayoutParams(-1, dp(42)));
-        oauth.setOnClickListener(v -> { w.dismiss(); oauthExisting(a); });
+        TextView login = popupAction(ChatGptSessionStore.has(this, a.id) ? "Обновить вход ChatGPT" : "Войти в ChatGPT");
+        panel.addView(login, new LinearLayout.LayoutParams(-1, dp(42)));
+        login.setOnClickListener(v -> { w.dismiss(); loginExisting(a); });
 
         TextView session = popupAction(ChatGptSessionStore.has(this, a.id) ? "Обновить Session JSON" : "Подключить Library Session");
         panel.addView(session, new LinearLayout.LayoutParams(-1, dp(42)));
