@@ -26,10 +26,12 @@ final class ChatMirrorSyncEngine {
 
     private final ChatGptProvider provider;
     private final ChatMirrorRepository mirror;
+    private final ChatAttachmentRepository attachments;
 
     ChatMirrorSyncEngine(Context context, DriveDb db, long accountId, ChatGptProvider provider) {
         this.provider = provider;
         this.mirror = new ChatMirrorRepository(context, db, accountId);
+        this.attachments = new ChatAttachmentRepository(db, accountId);
     }
 
     Result sync(List<ChatGptModels.RemoteConversation> archivedSeed,
@@ -49,6 +51,7 @@ final class ChatMirrorSyncEngine {
             try {
                 ChatGptModels.RemoteConversation full = provider.loadConversation(id);
                 mirror.storeFull(full);
+                attachments.replaceForConversation(full);
                 mirrored++;
             } catch (ChatGptProvider.AuthException e) {
                 mirror.markFetchError(id, e);
