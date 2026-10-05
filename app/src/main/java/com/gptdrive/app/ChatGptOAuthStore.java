@@ -5,11 +5,12 @@ import android.content.SharedPreferences;
 
 import org.json.JSONObject;
 
-/** Stores official Sign in with ChatGPT OAuth identity separately from Library session credentials. */
+/** Stores Sign in with ChatGPT identity separately from Library session credentials. */
 final class ChatGptOAuthStore {
     private static final String PREFS = "chatgpt_oauth_accounts";
     private static final String PREFIX = "acct_";
     private static final String HOST_ID = "ext_agent_host_id";
+    private static final String KEY_ALIAS = "GPTDrive.OAuthIdentity.v1";
 
     private ChatGptOAuthStore() {}
 
@@ -39,7 +40,8 @@ final class ChatGptOAuthStore {
             o.put("email", nz(email));
             o.put("name", nz(name));
             o.put("ext_agent_host_id", hostId(context));
-            prefs(context).edit().putString(PREFIX + accountId, o.toString()).apply();
+            String sealed = SecureJsonStore.seal(KEY_ALIAS, o.toString());
+            prefs(context).edit().putString(PREFIX + accountId, sealed).apply();
             return true;
         } catch (Exception e) {
             return false;
@@ -48,13 +50,16 @@ final class ChatGptOAuthStore {
 
     static Record load(Context context, long accountId) {
         if (context == null || accountId <= 0) return null;
-        String raw = prefs(context).getString(PREFIX + accountId, "");
-        if (raw == null || raw.trim().isEmpty()) return null;
+        SharedPreferences p = prefs(context);
+        String stored = p.getString(PREFIX + accountId, "");
+        if (stored == null || stored.trim().isEmpty()) return null;
         try {
+            boolean legacyPlaintext = !SecureJsonStore.isSealed(stored);
+            String raw = SecureJsonStore.open(KEY_ALIAS, stored);
             JSONObject o = new JSONObject(raw);
             String clientId = o.optString("client_id", "").trim();
             if (clientId.isEmpty()) return null;
-            return new Record(
+            Record result = new Record(
                     clientId,
                     o.optString("id_token", ""),
                     o.optString("access_token", ""),
@@ -66,6 +71,11 @@ final class ChatGptOAuthStore {
                     o.optString("email", ""),
                     o.optString("name", ""),
                     o.optString("ext_agent_host_id", ""));
+            if (legacyPlaintext) {
+                try { p.edit().putString(PREFIX + accountId, SecureJsonStore.seal(KEY_ALIAS, raw)).apply(); }
+                catch (Exception ignored) {}
+            }
+            return result;
         } catch (Exception e) {
             return null;
         }
