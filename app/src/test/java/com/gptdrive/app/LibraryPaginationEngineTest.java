@@ -80,6 +80,38 @@ public class LibraryPaginationEngineTest {
         }
     }
 
+    @Test public void rejectsHtml200InsteadOfFakeEmptySync() throws Exception {
+        try {
+            ChatGptProvider.validateLibraryResponse(ok("<!doctype html><html><body>login</body></html>"));
+            fail("Expected SchemaException");
+        } catch (ChatGptProvider.SchemaException expected) {
+            assertTrue(expected.getMessage().contains("не JSON"));
+        }
+    }
+
+    @Test public void warningBanner200RequiresReauthentication() throws Exception {
+        try {
+            ChatGptProvider.validateLibraryResponse(ok("{\"WARNING_BANNER\":\"DO NOT SHARE\"}"));
+            fail("Expected AuthException");
+        } catch (ChatGptProvider.AuthException expected) {
+            assertTrue(expected.getMessage().contains("WARNING_BANNER"));
+        }
+    }
+
+    @Test public void acceptsExplicitEmptyLibraryEnvelope() throws Exception {
+        HttpResponse r = ok("{\"items\":[],\"has_more\":false,\"total\":0}");
+        assertSame(r, ChatGptProvider.validateLibraryResponse(r));
+    }
+
+    @Test public void rejectsUnknownJsonObjectInsteadOfMarkingSynced() throws Exception {
+        try {
+            ChatGptProvider.validateLibraryResponse(ok("{\"status\":\"ok\"}"));
+            fail("Expected SchemaException");
+        } catch (ChatGptProvider.SchemaException expected) {
+            assertTrue(expected.getMessage().contains("ложный успех"));
+        }
+    }
+
     private static String page(String fileId, String next, boolean more) {
         String meta = next == null || next.isEmpty()
                 ? "\"has_more\":" + more

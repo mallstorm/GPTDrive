@@ -17,7 +17,7 @@ import android.widget.TextView;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Native synchronization host. Authentication is intentionally outside WebView. */
+/** Native synchronization host. Authentication is handled by the embedded ChatGPT session flow. */
 public final class BrowserActivity extends Activity {
     public static final String EXTRA_SECTION = "section";
     public static final String EXTRA_URL = "url";
@@ -55,12 +55,6 @@ public final class BrowserActivity extends Activity {
         setContentView(root);
 
         String requestedUrl = getIntent().getStringExtra(EXTRA_URL);
-        boolean freshLogin = getIntent().getBooleanExtra(EXTRA_NEW_LOGIN, false);
-        if (freshLogin) {
-            launchOAuth(false);
-            finish();
-            return;
-        }
         if (requestedUrl != null && !requestedUrl.trim().isEmpty()) {
             openSourceInSystemBrowser(requestedUrl);
             finish();
@@ -68,8 +62,14 @@ public final class BrowserActivity extends Activity {
         }
 
         buildSyncUi();
+        boolean freshLogin = getIntent().getBooleanExtra(EXTRA_NEW_LOGIN, false);
+        if (freshLogin) {
+            requireLibrarySession("Обнови вход ChatGPT перед синхронизацией.");
+            launchChatGptLogin();
+            return;
+        }
         if (ChatGptSessionStore.has(this, accountId)) startNativeSync();
-        else requireLibrarySession("Для синхронизации Library нужен Session JSON.");
+        else requireLibrarySession("Для синхронизации нужен рабочий вход ChatGPT.");
     }
 
     @Override protected void onResume() {
@@ -137,7 +137,7 @@ public final class BrowserActivity extends Activity {
         stats.addView(syncBytes, new LinearLayout.LayoutParams(0, dp(34), 1));
         card.addView(stats);
 
-        TextView note = text("Library читается через POST /backend-api/files/library с согласованием пагинации. Файлы открываются по file_id через свежую подписанную ссылку. Chat Mirror инкрементально сохраняет полные conversation mapping в локальный gzip-архив и не удаляет копию, если чат исчез с сервера.", 10, false, MUTED);
+        TextView note = text("Library читается напрямую через backend API. Успех показывается только после валидного JSON-ответа Library; HTML, WARNING_BANNER и неизвестная схема считаются ошибкой, а не пустой синхронизацией.", 10, false, MUTED);
         note.setPadding(0, dp(10), 0, 0);
         note.setLineSpacing(0, 1.12f);
         card.addView(note);
@@ -147,7 +147,7 @@ public final class BrowserActivity extends Activity {
         syncButton.setBackground(round(GREEN, 14, 0, 0));
         syncButton.setOnClickListener(v -> {
             if (finished) finishDone();
-            else if (waitingForSession) launchSessionImport();
+            else if (waitingForSession) launchChatGptLogin();
             else if (!syncing) startNativeSync();
         });
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(50));
@@ -158,7 +158,7 @@ public final class BrowserActivity extends Activity {
     private void startNativeSync() {
         if (syncing || finished) return;
         if (!ChatGptSessionStore.has(this, accountId)) {
-            requireLibrarySession("Library Session не подключена.");
+            requireLibrarySession("Рабочая backend-сессия ChatGPT не найдена.");
             return;
         }
         waitingForSession = false;
@@ -176,7 +176,7 @@ public final class BrowserActivity extends Activity {
                         runOnUiThread(() -> setStatus(phase + " " + part + "/" + total + " · " + objects, objects)));
                 runOnUiThread(() -> completeSync(result));
             } catch (ChatGptApiClient.AuthException e) {
-                runOnUiThread(() -> requireLibrarySession(e.getMessage() == null ? "Session ChatGPT устарела." : e.getMessage()));
+                runOnUiThread(() -> requireLibrarySession(e.getMessage() == null ? "Сессия ChatGPT недействительна." : e.getMessage()));
             } catch (Exception e) {
                 runOnUiThread(() -> failSync(e.getMessage()));
             }
@@ -192,28 +192,21 @@ public final class BrowserActivity extends Activity {
         if (bars != null) bars.setActive(false);
         if (syncStatus != null) {
             syncStatus.setTextColor(WARNING);
-            syncStatus.setText((message == null ? "Нужен Session JSON." : message) + " Открой импорт Session JSON и обнови Library-доступ.");
+            syncStatus.setText((message == null ? "Нужен вход ChatGPT." : message) + " Обнови вход через встроенное окно.");
         }
         if (syncButton != null) {
-            syncButton.setText("Обновить Session JSON");
+            syncButton.setText("Войти / обновить ChatGPT");
             syncButton.setEnabled(true);
             syncButton.setAlpha(1f);
         }
     }
 
-    private void launchSessionImport() {
+    private void launchChatGptLogin() {
         ChatGptSessionStore.Session old = ChatGptSessionStore.load(this, accountId);
         sessionSavedAtBeforePrompt = old == null ? 0 : old.savedAt;
-        Intent i = new Intent(this, SessionImportActivity.class);
-        i.putExtra(SessionImportActivity.EXTRA_ACCOUNT_ID, accountId);
-        i.putExtra(SessionImportActivity.EXTRA_NEW_ACCOUNT, false);
-        startActivity(i);
-    }
-
-    private void launchOAuth(boolean newAccount) {
-        Intent i = new Intent(this, ChatGptOAuthActivity.class);
-        i.putExtra(ChatGptOAuthActivity.EXTRA_ACCOUNT_ID, accountId);
-        i.putExtra(ChatGptOAuthActivity.EXTRA_NEW_ACCOUNT, newAccount);
+        Intent i = new Intent(this, ChatGptAuthActivity.class);
+        i.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, accountId);
+        i.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, false);
         startActivity(i);
     }
 
@@ -241,7 +234,7 @@ public final class BrowserActivity extends Activity {
                     " · Mirror " + r.mirroredChats + "/" + r.conversations);
             syncButton.setText("Готово");
         } else {
-            StringBuilder warning = new StringBuilder("Library синхронизирована");
+            StringBuilder warning = new StringBuilder("Library синхронизирована и проверена");
             if (!r.imagesFresh) warning.append(" · Images: сохранён предыдущий снимок");
             if (!r.projectsFresh) warning.append(" · Projects: сохранён предыдущий снимок");
             if (!r.archivedFresh) warning.append(" · Archive: сохранён предыдущий снимок");

@@ -43,7 +43,7 @@ final class ChatGptProvider {
     ChatGptModels.LibrarySnapshot loadLibrary(int maxPages, Progress progress) throws Exception {
         try {
             LibraryPaginationEngine.Result result = LibraryPaginationEngine.load(
-                    request -> backend("POST", request.endpoint, request.payload, true, true),
+                    request -> validateLibraryResponse(backend("POST", request.endpoint, request.payload, true, true)),
                     ChatGptProvider::ensureLibraryStatus,
                     maxPages,
                     (pages, objects) -> {
@@ -54,6 +54,53 @@ final class ChatGptProvider {
         } catch (LibraryPaginationEngine.PaginationFailure e) {
             throw new PaginationException(e.getMessage());
         }
+    }
+
+    /**
+     * HTTP 200 is not enough to call Library synchronized. ChatGPT can return an HTML shell,
+     * a WARNING_BANNER-only object or another non-Library payload with status 200. Reject those
+     * before the pagination engine can turn them into a fake empty successful snapshot.
+     */
+    static HttpResponse validateLibraryResponse(HttpResponse r) throws ProviderException {
+        ensureLibraryStatus(r);
+        String body = r.bodyUtf8();
+        Object parsed = ChatGptResponseParser.parse(body);
+        if (parsed == null) {
+            throw new SchemaException("ChatGPT Library вернула не JSON; синхронизация не выполнена");
+        }
+        if (parsed instanceof JSONArray) return r;
+        if (!(parsed instanceof JSONObject)) {
+            throw new SchemaException("ChatGPT Library вернула неизвестный формат; синхронизация не выполнена");
+        }
+
+        JSONObject root = (JSONObject) parsed;
+        if (root.has("WARNING_BANNER") && !hasLibraryEnvelope(root)) {
+            throw new AuthException("ChatGPT backend-сессия не подтверждена (WARNING_BANNER). Обнови вход ChatGPT");
+        }
+
+        ChatGptModels.LibraryPage page = ChatGptResponseParser.decodeLibraryPage(body);
+        if (page != null && page.files != null && !page.files.isEmpty()) return r;
+        if (hasLibraryEnvelope(root)) return r;
+
+        throw new SchemaException("ChatGPT Library вернула JSON без данных Library; ложный успех заблокирован");
+    }
+
+    private static boolean hasLibraryEnvelope(JSONObject root) {
+        if (root == null) return false;
+        String[] direct = {
+                "items", "files", "library", "library_items", "assets", "results",
+                "pagination", "page_info", "pageInfo", "meta", "next_cursor", "nextCursor",
+                "has_more", "hasMore", "total", "total_count", "totalCount", "cursor"
+        };
+        for (String key : direct) if (root.has(key)) return true;
+
+        Object data = root.opt("data");
+        if (data instanceof JSONArray) return true;
+        if (data instanceof JSONObject) {
+            JSONObject o = (JSONObject) data;
+            for (String key : direct) if (o.has(key)) return true;
+        }
+        return false;
     }
 
     List<ChatGptModels.RemoteFile> loadImages(Progress progress) throws Exception {
@@ -255,7 +302,7 @@ final class ChatGptProvider {
         if (r.code == 200) return;
         if (r.code == 401) throw new AuthException("ChatGPT session истекла (HTTP 401)");
         if (r.code == 403) {
-            if ("challenge".equalsIgnoreCase(r.header("cf-mitigated"))) throw new AuthException("ChatGPT Library: Cloudflare challenge. Нужен свежий Session JSON");
+            if ("challenge".equalsIgnoreCase(r.header("cf-mitigated"))) throw new AuthException("ChatGPT Library: Cloudflare challenge. Обнови вход ChatGPT");
             throw new AuthException("ChatGPT session недоступна (HTTP 403)");
         }
         if (r.code == 429) throw new RateLimitException("ChatGPT временно ограничил Library (HTTP 429)");
