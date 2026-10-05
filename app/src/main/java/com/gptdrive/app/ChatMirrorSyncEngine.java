@@ -50,6 +50,7 @@ final class ChatMirrorSyncEngine {
         for (String id : pending) {
             try {
                 ChatGptModels.RemoteConversation full = provider.loadConversation(id);
+                inheritSummary(full, merged.get(id));
                 mirror.storeFull(full);
                 attachments.replaceForConversation(full);
                 mirrored++;
@@ -65,6 +66,21 @@ final class ChatMirrorSyncEngine {
         }
 
         return new Result(summaries.size(), mirrored, failed, mirror.stats());
+    }
+
+    private static void inheritSummary(ChatGptModels.RemoteConversation full,
+                                       ChatGptModels.RemoteConversation summary) {
+        if (full == null || summary == null) return;
+        if (blank(full.title) || "ChatGPT chat".equals(full.title)) full.title = summary.title;
+        if (full.createdAt <= 0) full.createdAt = summary.createdAt;
+        if (full.updatedAt <= 0) full.updatedAt = summary.updatedAt;
+        full.archived = full.archived || summary.archived;
+        if (blank(full.projectId)) full.projectId = summary.projectId;
+        for (ChatGptModels.RemoteFile f : full.attachments) {
+            if (f == null) continue;
+            if (blank(f.conversationId)) f.conversationId = full.id;
+            if (blank(f.projectId)) f.projectId = full.projectId;
+        }
     }
 
     private static void mergeSummaries(LinkedHashMap<String, ChatGptModels.RemoteConversation> out,
@@ -87,6 +103,8 @@ final class ChatMirrorSyncEngine {
                 old.projectId = c.projectId;
         }
     }
+
+    private static boolean blank(String value) { return value == null || value.trim().isEmpty(); }
 
     ChatMirrorRepository.Stats stats() { return mirror.stats(); }
 }
