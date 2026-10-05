@@ -137,7 +137,7 @@ public final class BrowserActivity extends Activity {
         stats.addView(syncBytes, new LinearLayout.LayoutParams(0, dp(34), 1));
         card.addView(stats);
 
-        TextView note = text("Library читается через POST /backend-api/files/library с согласованием пагинации. Файлы открываются по file_id через новую подписанную ссылку; токены и OAuth хранятся отдельно в Android Keystore.", 10, false, MUTED);
+        TextView note = text("Library читается через POST /backend-api/files/library с согласованием пагинации. Файлы открываются по file_id через свежую подписанную ссылку. Chat Mirror инкрементально сохраняет полные conversation mapping в локальный gzip-архив и не удаляет копию, если чат исчез с сервера.", 10, false, MUTED);
         note.setPadding(0, dp(10), 0, 0);
         note.setLineSpacing(0, 1.12f);
         card.addView(note);
@@ -234,22 +234,28 @@ public final class BrowserActivity extends Activity {
         AccountProfile a = db.accountById(accountId);
         if (a != null) syncAccount.setText(a.displayName() + "  ·  " + a.planLabel());
 
-        if (r.fullyFresh()) {
+        if (r.fullyFresh() && r.mirrorFresh) {
             syncStatus.setTextColor(MUTED);
-            syncStatus.setText("Готово · Library " + r.library + " · Images " + r.images + " · Projects " + r.projects + " · Archive " + r.archived);
+            syncStatus.setText("Готово · Library " + r.library + " · Images " + r.images +
+                    " · Projects " + r.projects + " · Archive " + r.archived +
+                    " · Mirror " + r.mirroredChats + "/" + r.conversations);
             syncButton.setText("Готово");
         } else {
             StringBuilder warning = new StringBuilder("Library синхронизирована");
             if (!r.imagesFresh) warning.append(" · Images: сохранён предыдущий снимок");
             if (!r.projectsFresh) warning.append(" · Projects: сохранён предыдущий снимок");
             if (!r.archivedFresh) warning.append(" · Archive: сохранён предыдущий снимок");
+            if (!r.mirrorFresh) warning.append(" · Chat Mirror: локальный архив сохранён");
             syncStatus.setTextColor(WARNING);
             syncStatus.setText(warning.toString());
             syncButton.setText("Готово с предупреждением");
         }
 
         String strategy = r.libraryStrategy < 0 ? "initial" : Integer.toString(r.libraryStrategy);
-        syncCount.setText("Library pages: " + r.pages + " · strategy " + strategy);
+        String mirror = " · Mirror " + r.mirroredChats + "/" + r.conversations;
+        if (r.mirrorPending > 0) mirror += " (ещё " + r.mirrorPending + ")";
+        if (r.mirrorMissing > 0) mirror += " · локально сохранено удалённых: " + r.mirrorMissing;
+        syncCount.setText("Library pages: " + r.pages + " · strategy " + strategy + mirror);
         syncBytes.setText(storageText());
         bars.setActive(false);
         syncButton.setEnabled(true);
