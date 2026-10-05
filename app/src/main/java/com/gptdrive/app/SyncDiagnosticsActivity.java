@@ -84,6 +84,14 @@ public final class SyncDiagnosticsActivity extends Activity {
         addRow("Archive", db.count(accountId, "Archived") + " объектов", db.count(accountId, "Archived") > 0);
         addRow("Известный объём", MainActivity.formatBytes(db.knownStorageBytes(accountId)), db.knownStorageBytes(accountId) > 0);
 
+        ChatMirrorRepository.Stats mirror = new ChatMirrorRepository(this, db, accountId).stats();
+        addSection("Chat Mirror");
+        addRow("Удалённо", mirror.remotePresent + " чатов", mirror.remotePresent > 0);
+        addRow("Локальные snapshot", mirror.mirrored + " / " + mirror.total, mirror.mirrored > 0);
+        addRow("Ожидают snapshot", Integer.toString(mirror.pending), mirror.pending == 0);
+        addRow("Исчезли из ChatGPT", mirror.missingRemote + " · локальные копии не удаляются", true);
+        addRow("Локальный объём", MainActivity.formatBytes(mirror.bytes), mirror.bytes > 0);
+
         addSection("Синхронизация");
         List<SyncStateStore.State> states = SyncStateStore.list(db, accountId);
         if (states.isEmpty()) {
