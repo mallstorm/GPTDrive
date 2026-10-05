@@ -221,6 +221,7 @@ public final class AccountManagerActivity extends Activity {
         del.setOnClickListener(v -> {
             w.dismiss();
             if (a.active) { Toast.makeText(this, "Сначала переключись на другой аккаунт", Toast.LENGTH_SHORT).show(); return; }
+            new ChatMirrorRepository(this, db, a.id).deleteAccountMirror();
             ChatGptOAuthStore.clear(this, a.id); ChatGptSessionStore.clear(this, a.id);
             if (db.deleteAccount(a.id)) { notifyRoots(); render(); }
         });
