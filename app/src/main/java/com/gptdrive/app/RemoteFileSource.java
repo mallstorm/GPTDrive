@@ -10,7 +10,6 @@ import java.util.Locale;
 /** Resolves stable file_id references to fresh signed URLs on every open. */
 final class RemoteFileSource {
     private static final String CHATGPT = "https://chatgpt.com";
-    private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36 GPTDrive/0.8.2";
 
     private RemoteFileSource() {}
 
@@ -49,8 +48,6 @@ final class RemoteFileSource {
         if (c.isSuccess()) return c;
         int code = c.code;
         c.close();
-        // A stale direct URL is only a last-resort fallback. Stable gptdrive:// refs are
-        // always re-resolved first and are never persisted as signed URLs.
         if (sourceUrl != null && !sourceUrl.equals(resolved) && sourceUrl.startsWith("https://")) {
             Connection fallback = openOne(context, accountId, sourceUrl, true, offset);
             if (fallback.isSuccess()) return fallback;
@@ -65,7 +62,7 @@ final class RemoteFileSource {
         h.setInstanceFollowRedirects(true);
         h.setConnectTimeout(12000);
         h.setReadTimeout(45000);
-        h.setRequestProperty("User-Agent", UA);
+        h.setRequestProperty("User-Agent", AppIdentity.userAgent());
         h.setRequestProperty("Accept", "*/*");
         h.setRequestProperty("Referer", CHATGPT + "/");
         if (offset > 0) h.setRequestProperty("Range", "bytes=" + offset + "-");
@@ -106,8 +103,6 @@ final class RemoteFileSource {
         InputStream inputStream() throws Exception {
             if (stream != null) return stream;
             stream = connection.getInputStream();
-            // Some signed storage endpoints ignore Range and answer 200. Preserve seek
-            // semantics by discarding the prefix locally in that case.
             if (requestedOffset > 0 && code == 200) skipFully(stream, requestedOffset);
             return stream;
         }
