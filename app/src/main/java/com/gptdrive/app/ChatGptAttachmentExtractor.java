@@ -57,7 +57,9 @@ final class ChatGptAttachmentExtractor {
             candidate.conversationId = ChatGptModels.first(candidate.conversationId, conversationId);
             candidate.messageId = ChatGptModels.first(candidate.messageId, messageId);
             candidate.projectId = ChatGptModels.first(candidate.projectId, projectId);
-            candidate.sourceFlags |= ChatGptModels.SRC_CONVERSATION;
+            // This parser is operating on a conversation snapshot, not the Library feed.
+            // Other sources are merged later by stable file_id.
+            candidate.sourceFlags = ChatGptModels.SRC_CONVERSATION;
             ChatGptModels.merge(out, candidate);
         }
 
