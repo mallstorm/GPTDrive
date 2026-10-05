@@ -24,12 +24,16 @@ final class AndroidHttpTransport implements HttpTransport {
         Exception last = null;
         int attempts = request.retryable ? 4 : 1;
         for (int attempt = 0; attempt < attempts; attempt++) {
+            long started = System.nanoTime();
+            String route = SmartDnsManager.isEnabled() ? SmartDnsManager.selectedSummary() : "System DNS";
             try {
                 HttpResponse r = executeOnce(request);
+                NetworkTraceStore.add(request.method, request.url, r.code, elapsedMs(started), attempt + 1, route, null);
                 if (!request.retryable || !shouldRetry(r.code) || attempt + 1 >= attempts) return r;
                 sleepBackoff(attempt, r.header("retry-after"));
             } catch (Exception e) {
                 last = e;
+                NetworkTraceStore.add(request.method, request.url, 0, elapsedMs(started), attempt + 1, route, e);
                 if (!request.retryable || attempt + 1 >= attempts) throw e;
                 sleepBackoff(attempt, "");
             }
@@ -40,29 +44,32 @@ final class AndroidHttpTransport implements HttpTransport {
 
     private HttpResponse executeOnce(HttpRequest r) throws Exception {
         HttpURLConnection h = (HttpURLConnection) new URL(r.url).openConnection(SmartDnsProxy.proxy(context));
-        h.setRequestMethod(r.method);
-        h.setConnectTimeout(r.connectTimeoutMs > 0 ? r.connectTimeoutMs : 15000);
-        h.setReadTimeout(r.readTimeoutMs > 0 ? r.readTimeoutMs : 30000);
-        h.setInstanceFollowRedirects(r.followRedirects);
-        for (Map.Entry<String, String> e : r.headers.entrySet()) {
-            if (e.getKey() != null && e.getValue() != null) h.setRequestProperty(e.getKey(), e.getValue());
+        try {
+            h.setRequestMethod(r.method);
+            h.setConnectTimeout(r.connectTimeoutMs > 0 ? r.connectTimeoutMs : 15000);
+            h.setReadTimeout(r.readTimeoutMs > 0 ? r.readTimeoutMs : 30000);
+            h.setInstanceFollowRedirects(r.followRedirects);
+            for (Map.Entry<String, String> e : r.headers.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) h.setRequestProperty(e.getKey(), e.getValue());
+            }
+            if (r.body != null) {
+                h.setDoOutput(true);
+                h.setFixedLengthStreamingMode(r.body.length);
+                try (OutputStream out = h.getOutputStream()) { out.write(r.body); }
+            }
+            int code = h.getResponseCode();
+            InputStream in = code >= 400 ? h.getErrorStream() : h.getInputStream();
+            byte[] body = read(in, r.maxBodyBytes > 0 ? r.maxBodyBytes : 32 * 1024 * 1024);
+            Map<String, String> headers = new LinkedHashMap<>();
+            for (Map.Entry<String, List<String>> e : h.getHeaderFields().entrySet()) {
+                if (e.getKey() == null || e.getValue() == null || e.getValue().isEmpty()) continue;
+                headers.put(e.getKey().toLowerCase(Locale.ROOT), e.getValue().get(0));
+            }
+            String finalUrl = h.getURL() == null ? r.url : h.getURL().toString();
+            return new HttpResponse(code, body, headers, finalUrl);
+        } finally {
+            h.disconnect();
         }
-        if (r.body != null) {
-            h.setDoOutput(true);
-            h.setFixedLengthStreamingMode(r.body.length);
-            try (OutputStream out = h.getOutputStream()) { out.write(r.body); }
-        }
-        int code = h.getResponseCode();
-        InputStream in = code >= 400 ? h.getErrorStream() : h.getInputStream();
-        byte[] body = read(in, r.maxBodyBytes > 0 ? r.maxBodyBytes : 32 * 1024 * 1024);
-        Map<String, String> headers = new LinkedHashMap<>();
-        for (Map.Entry<String, List<String>> e : h.getHeaderFields().entrySet()) {
-            if (e.getKey() == null || e.getValue() == null || e.getValue().isEmpty()) continue;
-            headers.put(e.getKey().toLowerCase(Locale.ROOT), e.getValue().get(0));
-        }
-        String finalUrl = h.getURL() == null ? r.url : h.getURL().toString();
-        h.disconnect();
-        return new HttpResponse(code, body, headers, finalUrl);
     }
 
     private static boolean shouldRetry(int code) {
@@ -96,5 +103,9 @@ final class AndroidHttpTransport implements HttpTransport {
             }
             return out.toByteArray();
         }
+    }
+
+    private static long elapsedMs(long startedNanos) {
+        return Math.max(0, (System.nanoTime() - startedNanos) / 1_000_000L);
     }
 }
