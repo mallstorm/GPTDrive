@@ -26,6 +26,7 @@ final class ChatGptModels {
         long updatedAt;
         String conversationId = "";
         String messageId = "";
+        String projectId = "";
         String assetPointer = "";
         String rawUrl = "";
         int width;
@@ -58,7 +59,7 @@ final class ChatGptModels {
         final List<String> conversationIds = new ArrayList<>();
     }
 
-    /** Summary or full raw conversation. rawJson is filled only for /conversation/<id>. */
+    /** Summary or full raw conversation. rawJson/attachments are filled for /conversation/<id>. */
     static final class RemoteConversation {
         String id = "";
         String title = "ChatGPT chat";
@@ -69,6 +70,7 @@ final class ChatGptModels {
         String currentNode = "";
         boolean hasMapping;
         String rawJson = "";
+        final List<RemoteFile> attachments = new ArrayList<>();
 
         boolean hasFullSnapshot() { return rawJson != null && !rawJson.trim().isEmpty(); }
     }
@@ -119,6 +121,7 @@ final class ChatGptModels {
         if (incoming.updatedAt > cur.updatedAt) cur.updatedAt = incoming.updatedAt;
         cur.conversationId = first(cur.conversationId, incoming.conversationId);
         cur.messageId = first(cur.messageId, incoming.messageId);
+        cur.projectId = first(cur.projectId, incoming.projectId);
         cur.assetPointer = first(cur.assetPointer, incoming.assetPointer);
         cur.rawUrl = first(cur.rawUrl, incoming.rawUrl);
         if (cur.width <= 0) cur.width = incoming.width;
