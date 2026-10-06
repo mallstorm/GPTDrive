@@ -12,6 +12,7 @@ final class DriveCollections {
     static final String IMAGES = "Images";
     static final String GENERATED = "Generated";
     static final String ARCHIVED = "Archived";
+    private static final int SRC_GENERATED_FUTURE = 1 << 4;
 
     static final class ProjectEntry {
         final long rowId;
@@ -41,7 +42,7 @@ final class DriveCollections {
                 new String[]{Long.toString(accountId), Integer.toString(ChatGptModels.SRC_IMAGE_GEN)});
         if (GENERATED.equals(collection)) return scalar(sql,
                 "SELECT COUNT(*) FROM files WHERE account_id=? AND (source_flags & ?)<>0",
-                new String[]{Long.toString(accountId), Integer.toString(ChatGptModels.SRC_IMAGE_GEN | ChatGptModels.SRC_GENERATED)});
+                new String[]{Long.toString(accountId), Integer.toString(ChatGptModels.SRC_IMAGE_GEN | SRC_GENERATED_FUTURE)});
         if (ARCHIVED.equals(collection)) return scalar(sql,
                 "SELECT COUNT(DISTINCT f.id) FROM files f JOIN conversations c ON c.account_id=f.account_id AND c.conversation_id=f.conversation_id WHERE f.account_id=? AND c.archived=1",
                 new String[]{Long.toString(accountId)});
@@ -69,7 +70,7 @@ final class DriveCollections {
             args = new String[]{Long.toString(accountId), Integer.toString(ChatGptModels.SRC_IMAGE_GEN)};
         } else if (GENERATED.equals(collection)) {
             where = "f.account_id=? AND (f.source_flags & ?)<>0";
-            args = new String[]{Long.toString(accountId), Integer.toString(ChatGptModels.SRC_IMAGE_GEN | ChatGptModels.SRC_GENERATED)};
+            args = new String[]{Long.toString(accountId), Integer.toString(ChatGptModels.SRC_IMAGE_GEN | SRC_GENERATED_FUTURE)};
         } else if (ARCHIVED.equals(collection)) {
             tables = "files f JOIN conversations c ON c.account_id=f.account_id AND c.conversation_id=f.conversation_id";
             where = "f.account_id=? AND c.archived=1";
