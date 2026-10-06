@@ -7,6 +7,8 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
 import android.widget.FrameLayout;
@@ -14,15 +16,13 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-/** Native synchronization host. Normal sync is metadata-only; file bodies are on-demand. */
+/** Native synchronization host. Sync itself runs in SyncForegroundService. */
 public final class BrowserActivity extends Activity {
     public static final String EXTRA_SECTION = "section";
     public static final String EXTRA_URL = "url";
     public static final String EXTRA_ACCOUNT_ID = "account_id";
     public static final String EXTRA_NEW_LOGIN = "new_login";
+    public static final String EXTRA_ATTACH_ONLY = "attach_only";
 
     private static final String AUTHORITY = "com.gptdrive.app.documents";
     private static final int GREEN = 0xFF08A66D;
@@ -31,12 +31,20 @@ public final class BrowserActivity extends Activity {
     private static final int WARNING = 0xFFB54708;
     private static final int BG = 0xFFF7F9FA;
 
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable poller = new Runnable() {
+        @Override public void run() {
+            renderRuntimeState();
+            handler.postDelayed(this, 400);
+        }
+    };
+
     private DriveDb db;
     private long accountId;
     private boolean syncing;
     private boolean finished;
     private boolean waitingForSession;
+    private boolean polling;
     private long sessionSavedAtBeforePrompt;
     private FrameLayout root;
     private TextView syncAccount;
@@ -63,23 +71,52 @@ public final class BrowserActivity extends Activity {
 
         buildSyncUi();
         boolean freshLogin = getIntent().getBooleanExtra(EXTRA_NEW_LOGIN, false);
+        boolean attachOnly = getIntent().getBooleanExtra(EXTRA_ATTACH_ONLY, false);
         if (freshLogin) {
             requireLibrarySession("Обнови вход ChatGPT перед синхронизацией.");
             launchChatGptLogin();
             return;
         }
-        if (ChatGptSessionStore.has(this, accountId)) startNativeSync();
-        else requireLibrarySession("Для синхронизации нужен рабочий вход ChatGPT.");
+
+        SyncRuntimeState.Snapshot snapshot = SyncRuntimeState.read(this, accountId);
+        if (snapshot.running()) {
+            renderRuntimeState();
+        } else if (attachOnly) {
+            renderRuntimeState();
+        } else if (ChatGptSessionStore.has(this, accountId)) {
+            startNativeSync();
+        } else {
+            requireLibrarySession("Для синхронизации нужен рабочий вход ChatGPT.");
+        }
     }
 
     @Override protected void onResume() {
         super.onResume();
-        if (!waitingForSession || syncing || finished) return;
-        ChatGptSessionStore.Session s = ChatGptSessionStore.load(this, accountId);
-        if (s != null && s.savedAt > sessionSavedAtBeforePrompt) {
-            waitingForSession = false;
-            startNativeSync();
+        if (waitingForSession && !syncing && !finished) {
+            ChatGptSessionStore.Session s = ChatGptSessionStore.load(this, accountId);
+            if (s != null && s.savedAt > sessionSavedAtBeforePrompt) {
+                waitingForSession = false;
+                startNativeSync();
+            }
         }
+        renderRuntimeState();
+        startPolling();
+    }
+
+    @Override protected void onPause() {
+        stopPolling();
+        super.onPause();
+    }
+
+    private void startPolling() {
+        if (polling) return;
+        polling = true;
+        handler.post(poller);
+    }
+
+    private void stopPolling() {
+        polling = false;
+        handler.removeCallbacks(poller);
     }
 
     private void buildSyncUi() {
@@ -100,7 +137,7 @@ public final class BrowserActivity extends Activity {
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.addView(text("GPT Drive", 20, true, TEXT));
-        titles.addView(text("Metadata Sync · " + AppIdentity.providerLabel(), 10, false, MUTED));
+        titles.addView(text("Background Metadata Sync · " + AppIdentity.providerLabel(), 10, false, MUTED));
         header.addView(titles, new LinearLayout.LayoutParams(0, dp(52), 1));
         TextView close = text("×", 27, false, MUTED);
         close.setGravity(Gravity.CENTER);
@@ -137,7 +174,7 @@ public final class BrowserActivity extends Activity {
         stats.addView(syncBytes, new LinearLayout.LayoutParams(0, dp(34), 1));
         card.addView(stats);
 
-        TextView note = text("Синхронизация обновляет только каталог: имена, размеры, типы, проекты и ссылки. Содержимое файлов и полные истории чатов на телефон не скачиваются. Превью и файлы загружаются только по запросу.", 10, false, MUTED);
+        TextView note = text("Синхронизация идёт в фоновом foreground-service и не прерывается при сворачивании экрана. Счётчик хранится отдельно от Activity. Загружаются только метаданные; содержимое файлов остаётся облачным.", 10, false, MUTED);
         note.setPadding(0, dp(10), 0, 0);
         note.setLineSpacing(0, 1.12f);
         card.addView(note);
@@ -156,31 +193,97 @@ public final class BrowserActivity extends Activity {
     }
 
     private void startNativeSync() {
-        if (syncing || finished) return;
+        if (syncing) return;
         if (!ChatGptSessionStore.has(this, accountId)) {
             requireLibrarySession("Рабочая backend-сессия ChatGPT не найдена.");
             return;
         }
         waitingForSession = false;
+        finished = false;
         syncing = true;
+        SyncRuntimeState.begin(this, accountId);
+        showRunning("Получаю метаданные ChatGPT…", SyncRuntimeState.read(this, accountId).objects);
+        try {
+            SyncForegroundService.start(this, accountId);
+        } catch (Exception e) {
+            String m = e.getMessage();
+            SyncRuntimeState.error(this, accountId, m == null ? "Не удалось запустить фоновую синхронизацию" : m);
+            renderRuntimeState();
+        }
+    }
+
+    private void renderRuntimeState() {
+        if (syncStatus == null) return;
+        SyncRuntimeState.Snapshot s = SyncRuntimeState.read(this, accountId);
+        if (s.running()) {
+            syncing = true;
+            finished = false;
+            waitingForSession = false;
+            String phase = s.phase == null || s.phase.trim().isEmpty() ? "Синхронизация" : s.phase;
+            if (s.total > 0) phase += " " + s.part + "/" + s.total;
+            showRunning(phase, s.objects);
+            return;
+        }
+        if (s.success()) {
+            syncing = false;
+            finished = true;
+            waitingForSession = false;
+            bars.setActive(false);
+            AccountProfile a = db.accountById(accountId);
+            if (a != null) syncAccount.setText(a.displayName() + "  ·  " + a.planLabel());
+            boolean allFresh = s.imagesFresh && s.projectsFresh && s.archivedFresh;
+            syncStatus.setTextColor(allFresh ? MUTED : WARNING);
+            syncStatus.setText((allFresh ? "Готово" : "Готово с предупреждением") +
+                    " · Library " + s.library + " · Images " + s.images +
+                    " · Projects " + s.projects + " · Archive " + s.archived);
+            String strategy = s.strategy < 0 ? "initial" : Integer.toString(s.strategy);
+            syncCount.setText("Library pages: " + s.pages + " · strategy " + strategy + " · metadata-only");
+            syncBytes.setText(storageText());
+            syncButton.setText(allFresh ? "Готово" : "Готово с предупреждением");
+            syncButton.setEnabled(true);
+            syncButton.setAlpha(1f);
+            return;
+        }
+        if (s.auth()) {
+            if (!waitingForSession) {
+                ChatGptSessionStore.Session old = ChatGptSessionStore.load(this, accountId);
+                sessionSavedAtBeforePrompt = old == null ? 0 : old.savedAt;
+            }
+            syncing = false;
+            finished = false;
+            waitingForSession = true;
+            bars.setActive(false);
+            syncStatus.setTextColor(WARNING);
+            syncStatus.setText((s.message == null || s.message.trim().isEmpty() ? "Сессия ChatGPT недействительна." : s.message) + " Обнови вход через встроенное окно.");
+            syncButton.setText("Войти / обновить ChatGPT");
+            syncButton.setEnabled(true);
+            syncButton.setAlpha(1f);
+            return;
+        }
+        if (s.error()) {
+            syncing = false;
+            finished = false;
+            waitingForSession = false;
+            bars.setActive(false);
+            syncStatus.setTextColor(WARNING);
+            syncStatus.setText(s.message == null || s.message.trim().isEmpty() ? "Ошибка синхронизации" : s.message);
+            syncCount.setText("Найдено: " + s.objects);
+            syncButton.setText("Повторить");
+            syncButton.setEnabled(true);
+            syncButton.setAlpha(1f);
+        }
+    }
+
+    private void showRunning(String status, int objects) {
         bars.setActive(true);
+        bars.pulse(1f);
+        syncStatus.setTextColor(MUTED);
+        syncStatus.setText(status);
+        syncCount.setText("Найдено: " + objects);
+        syncBytes.setText(storageText());
+        syncButton.setText("Идёт в фоне…");
         syncButton.setEnabled(false);
         syncButton.setAlpha(.55f);
-        syncButton.setText("Идёт синхронизация…");
-        syncStatus.setTextColor(MUTED);
-        setStatus("Получаю метаданные ChatGPT…", 0);
-        worker.execute(() -> {
-            try {
-                ChatGptApiClient client = new ChatGptApiClient(this, db, accountId);
-                ChatGptApiClient.SyncResult result = client.sync((phase, part, total, objects) ->
-                        runOnUiThread(() -> setStatus(phase + " " + part + "/" + total + " · " + objects, objects)));
-                runOnUiThread(() -> completeSync(result));
-            } catch (ChatGptApiClient.AuthException e) {
-                runOnUiThread(() -> requireLibrarySession(e.getMessage() == null ? "Сессия ChatGPT недействительна." : e.getMessage()));
-            } catch (Exception e) {
-                runOnUiThread(() -> failSync(e.getMessage()));
-            }
-        });
     }
 
     private void requireLibrarySession(String message) {
@@ -219,55 +322,6 @@ public final class BrowserActivity extends Activity {
         catch (Exception ignored) {}
     }
 
-    private void completeSync(ChatGptApiClient.SyncResult r) {
-        syncing = false;
-        finished = true;
-        waitingForSession = false;
-        notifyRoots();
-        AccountProfile a = db.accountById(accountId);
-        if (a != null) syncAccount.setText(a.displayName() + "  ·  " + a.planLabel());
-
-        if (r.fullyFresh()) {
-            syncStatus.setTextColor(MUTED);
-            syncStatus.setText("Готово · Library " + r.library + " · Images " + r.images +
-                    " · Projects " + r.projects + " · Archive " + r.archived + " · без скачивания файлов");
-            syncButton.setText("Готово");
-        } else {
-            StringBuilder warning = new StringBuilder("Library синхронизирована");
-            if (!r.imagesFresh) warning.append(" · Images: сохранён предыдущий снимок");
-            if (!r.projectsFresh) warning.append(" · Projects: сохранён предыдущий снимок");
-            if (!r.archivedFresh) warning.append(" · Archive: сохранён предыдущий снимок");
-            syncStatus.setTextColor(WARNING);
-            syncStatus.setText(warning.toString());
-            syncButton.setText("Готово с предупреждением");
-        }
-
-        String strategy = r.libraryStrategy < 0 ? "initial" : Integer.toString(r.libraryStrategy);
-        syncCount.setText("Library pages: " + r.pages + " · strategy " + strategy + " · metadata-only");
-        syncBytes.setText(storageText());
-        bars.setActive(false);
-        syncButton.setEnabled(true);
-        syncButton.setAlpha(1f);
-    }
-
-    private void failSync(String message) {
-        syncing = false;
-        finished = false;
-        waitingForSession = false;
-        bars.setActive(false);
-        syncStatus.setTextColor(WARNING);
-        syncStatus.setText(message == null || message.trim().isEmpty() ? "Ошибка синхронизации" : message);
-        syncButton.setText("Повторить");
-        syncButton.setEnabled(true);
-        syncButton.setAlpha(1f);
-    }
-
-    private void setStatus(String status, int objects) {
-        if (syncStatus != null) syncStatus.setText(status);
-        if (syncCount != null) syncCount.setText("Найдено: " + objects);
-        if (bars != null) { bars.setActive(true); bars.pulse(1f); }
-    }
-
     private String storageText() {
         AccountProfile a = db.accountById(accountId);
         if (a != null && a.hasRemoteQuota()) return MainActivity.formatBytes(a.remoteUsedBytes) + " / " + MainActivity.formatBytes(a.remoteQuotaBytes);
@@ -285,7 +339,7 @@ public final class BrowserActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        worker.shutdownNow();
+        stopPolling();
         super.onDestroy();
     }
 
