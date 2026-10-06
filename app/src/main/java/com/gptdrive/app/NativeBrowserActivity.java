@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -27,6 +26,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Native semantic collection browser with stable infinite paging and batch selection. */
 public final class NativeBrowserActivity extends Activity {
@@ -56,6 +57,7 @@ public final class NativeBrowserActivity extends Activity {
     private TextView selectionCount;
     private final ArrayList<DriveItem> loaded = new ArrayList<>();
     private final Set<Long> selected = new HashSet<>();
+    private final ExecutorService mutationWorker = Executors.newSingleThreadExecutor();
     private int offset;
     private long total;
     private boolean loading;
@@ -224,12 +226,8 @@ public final class NativeBrowserActivity extends Activity {
         loading = false;
         updateSummary();
 
-        if (searchText().isEmpty() && !initial) {
-            appendRendered(page);
-        } else {
-            renderFromLoaded();
-        }
-        // Short first page on a tall screen: prefetch one more page so scrolling feels continuous.
+        if (searchText().isEmpty() && !initial) appendRendered(page);
+        else renderFromLoaded();
         if (!exhausted && loaded.size() == oldSize + page.size() && loaded.size() < PAGE * 2 && scroll.getHeight() > 0)
             scroll.post(() -> {
                 View child = scroll.getChildAt(0);
@@ -242,7 +240,9 @@ public final class NativeBrowserActivity extends Activity {
         if (DriveCollections.FILES.equals(category) || DriveCollections.IMAGES.equals(category) ||
                 DriveCollections.GENERATED.equals(category) || DriveCollections.ARCHIVED.equals(category))
             return collections.list(accountId, category, limit, start);
-        return db.list(accountId, category, Math.min(5000, start + limit)).subList(Math.min(start, db.list(accountId, category, Math.min(5000, start + limit)).size()), db.list(accountId, category, Math.min(5000, start + limit)).size());
+        List<DriveItem> all = db.list(accountId, category, Math.min(5000, start + limit));
+        int from = Math.min(start, all.size());
+        return new ArrayList<>(all.subList(from, all.size()));
     }
 
     private long totalCount() {
@@ -270,9 +270,8 @@ public final class NativeBrowserActivity extends Activity {
 
     private void appendImages(List<DriveItem> items) {
         GridLayout grid;
-        if (content.getChildCount() > 0 && content.getChildAt(content.getChildCount() - 1) instanceof GridLayout) {
-            grid = (GridLayout) content.getChildAt(content.getChildCount() - 1);
-        } else {
+        if (content.getChildCount() > 0 && content.getChildAt(content.getChildCount() - 1) instanceof GridLayout) grid = (GridLayout) content.getChildAt(content.getChildCount() - 1);
+        else {
             grid = new GridLayout(this);
             grid.setColumnCount(2);
             content.addView(grid, new LinearLayout.LayoutParams(-1, -2));
@@ -395,23 +394,39 @@ public final class NativeBrowserActivity extends Activity {
     private void deleteSelectedSafely() {
         List<DriveItem> items = selectedItems();
         if (items.isEmpty()) return;
-        DriveItem first = items.get(0);
         new AlertDialog.Builder(this)
-                .setTitle("Удалить в ChatGPT")
-                .setMessage("Удаление должно попасть в реальную корзину ChatGPT, а не исчезнуть только из индекса GPT Drive. Открою Library с первым выбранным файлом для подтверждения. После удаления синхронизация уберёт его из списка.\n\nВыбрано: " + items.size())
+                .setTitle("Переместить в «Удалённые»?")
+                .setMessage("Выбрано: " + items.size() + ". Материалы будут перемещены в нативный раздел «Удалённые» и останутся доступными для восстановления до окончательной очистки.")
                 .setNegativeButton("Отмена", null)
-                .setPositiveButton("Открыть Library", (d, w) -> openDeleteHandoff(first, items.size()))
+                .setPositiveButton("Удалить", (d, w) -> moveSelectedToTrash(items))
                 .show();
     }
 
-    private void openDeleteHandoff(DriveItem first, int count) {
-        String url = "https://chatgpt.com/library?tab=all&search=" + Uri.encode(first.name == null ? "" : first.name);
-        Intent i = new Intent(this, DeletedLibraryActivity.class);
-        i.putExtra(DeletedLibraryActivity.EXTRA_ACCOUNT_ID, accountId);
-        i.putExtra(DeletedLibraryActivity.EXTRA_URL, url);
-        i.putExtra(DeletedLibraryActivity.EXTRA_TITLE, "Удаление из Library");
-        i.putExtra(DeletedLibraryActivity.EXTRA_NOTE, "Выбрано в GPT Drive: " + count + ". Подтверди удаление в реальном интерфейсе ChatGPT — файл попадёт в «Удалённые», откуда его можно восстановить до окончательного удаления.");
-        startActivity(i);
+    private void moveSelectedToTrash(List<DriveItem> items) {
+        if (items == null || items.isEmpty()) return;
+        actionBar.setEnabled(false);
+        Toast.makeText(this, "Перемещаю в «Удалённые»…", Toast.LENGTH_SHORT).show();
+        mutationWorker.execute(() -> {
+            LibraryMutationClient client = new LibraryMutationClient(this, accountId);
+            int ok = 0;
+            String firstError = "";
+            for (DriveItem x : items) {
+                try {
+                    client.moveToTrash(x);
+                    ok++;
+                } catch (Exception e) {
+                    if (firstError.isEmpty()) firstError = e.getMessage() == null ? "ошибка удаления" : e.getMessage();
+                }
+            }
+            int success = ok;
+            String error = firstError;
+            runOnUiThread(() -> {
+                actionBar.setEnabled(true);
+                resetAndLoad();
+                if (success == items.size()) Toast.makeText(this, "Перемещено в «Удалённые»: " + success, Toast.LENGTH_SHORT).show();
+                else Toast.makeText(this, "Удалено: " + success + "/" + items.size() + (error.isEmpty() ? "" : " · " + error), Toast.LENGTH_LONG).show();
+            });
+        });
     }
 
     private List<DriveItem> selectedItems() {
@@ -425,18 +440,20 @@ public final class NativeBrowserActivity extends Activity {
         m.getMenu().add(0, 1, 0, "Открыть");
         m.getMenu().add(0, 2, 1, "Скачать");
         m.getMenu().add(0, 3, 2, "Выделить");
-        m.getMenu().add(0, 4, 3, "Источник в ChatGPT");
+        m.getMenu().add(0, 4, 3, "Удалить");
         m.setOnMenuItemClickListener(mi -> {
             if (mi.getItemId() == 1) DriveActions.open(this, item);
             else if (mi.getItemId() == 2) DriveActions.download(this, item);
             else if (mi.getItemId() == 3) toggleSelection(item);
             else {
-                Intent i = new Intent(this, DeletedLibraryActivity.class);
-                i.putExtra(DeletedLibraryActivity.EXTRA_ACCOUNT_ID, accountId);
-                i.putExtra(DeletedLibraryActivity.EXTRA_URL, "https://chatgpt.com/library?tab=all&search=" + Uri.encode(item.name == null ? "" : item.name));
-                i.putExtra(DeletedLibraryActivity.EXTRA_TITLE, "Источник в ChatGPT");
-                i.putExtra(DeletedLibraryActivity.EXTRA_NOTE, "Открыт исходный Library текущего аккаунта.");
-                startActivity(i);
+                ArrayList<DriveItem> one = new ArrayList<>();
+                one.add(item);
+                new AlertDialog.Builder(this)
+                        .setTitle("Переместить в «Удалённые»?")
+                        .setMessage(item.name)
+                        .setNegativeButton("Отмена", null)
+                        .setPositiveButton("Удалить", (d, w) -> moveSelectedToTrash(one))
+                        .show();
             }
             return true;
         });
@@ -458,9 +475,7 @@ public final class NativeBrowserActivity extends Activity {
         return search == null ? "" : search.getText().toString().trim().toLowerCase(Locale.ROOT);
     }
 
-    private boolean isImageOnlyCollection() {
-        return DriveCollections.IMAGES.equals(category);
-    }
+    private boolean isImageOnlyCollection() { return DriveCollections.IMAGES.equals(category); }
 
     private void empty() {
         LinearLayout box = new LinearLayout(this);
@@ -493,9 +508,7 @@ public final class NativeBrowserActivity extends Activity {
         startActivityForResult(i, SYNC_REQUEST);
     }
 
-    private void updateSummary() {
-        summary.setText(loaded.size() + " / " + total + " объектов");
-    }
+    private void updateSummary() { summary.setText(loaded.size() + " / " + total + " объектов"); }
 
     private String titleFor() {
         if (projectRowId > 0) return collections.projectName(accountId, projectRowId);
@@ -533,4 +546,9 @@ public final class NativeBrowserActivity extends Activity {
     }
 
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
+
+    @Override protected void onDestroy() {
+        mutationWorker.shutdownNow();
+        super.onDestroy();
+    }
 }
