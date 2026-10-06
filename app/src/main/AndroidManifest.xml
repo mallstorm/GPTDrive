@@ -5,12 +5,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
 
     <application
+        android:name=".GptDriveApp"
         android:allowBackup="false"
         android:label="GPT Drive"
         android:icon="@drawable/ic_drive"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
 
+        <activity android:name=".SecurityActivity" android:exported="false"/>
+        <activity android:name=".UnlockActivity" android:exported="false" android:excludeFromRecents="true"/>
         <activity android:name=".AccountManagerActivity" android:exported="false"/>
         <activity android:name=".SyncDiagnosticsActivity" android:exported="false"/>
         <activity android:name=".DnsSettingsActivity" android:exported="false"/>
