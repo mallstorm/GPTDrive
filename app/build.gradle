@@ -8,8 +8,8 @@ android {
         applicationId 'com.gptdrive.app'
         minSdk 26
         targetSdk 35
-        versionCode 42
-        versionName '0.11.0'
+        versionCode 44
+        versionName '0.11.2'
     }
 
     buildTypes {

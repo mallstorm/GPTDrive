@@ -3,8 +3,10 @@ package com.gptdrive.app;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.security.MessageDigest;
 import java.util.Arrays;
@@ -12,10 +14,21 @@ import java.util.Comparator;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Persistent small previews. Unlike ImageDiskCache this stores scaled JPEG thumbnails, not originals. */
+/**
+ * Persistent thumbnail index.
+ *
+ * Important: thumbnails are deliberately stored under filesDir, not cacheDir, so Android does not
+ * evict them as ordinary cache. There is no artificial size ceiling. The nominal 768 MiB budget is
+ * only a planning target; the index may grow beyond it while the device has enough free storage.
+ * Old thumbnails are removed only by the low-storage safety guard or together with app data.
+ */
 final class ThumbnailDiskCache {
-    private static final long MAX_BYTES = 192L * 1024L * 1024L;
-    private static final long TARGET_BYTES = 144L * 1024L * 1024L;
+    static final long NOMINAL_BUDGET_BYTES = 768L * 1024L * 1024L;
+    private static final long MIN_FREE_BYTES = 768L * 1024L * 1024L;
+    private static final long TARGET_FREE_BYTES = 1536L * 1024L * 1024L;
+    private static final String DIR_NAME = "thumbnail-index-v3";
+    private static final String LEGACY_DIR_NAME = "gptdrive-thumbs-v2";
+
     private static final ConcurrentHashMap<String, Object> LOCKS = new ConcurrentHashMap<>();
     private static final Object PRUNE_LOCK = new Object();
 
@@ -23,29 +36,38 @@ final class ThumbnailDiskCache {
 
     static Bitmap get(Context context, long accountId, String sourceUrl, int maxDimension) throws Exception {
         Context app = context.getApplicationContext();
-        String stable = RemoteFileSource.stableUrl(sourceUrl);
-        String digest = sha256(accountId + "|" + maxDimension + "|" + stable);
-        File dir = new File(app.getCacheDir(), "gptdrive-thumbs-v2");
-        if (!dir.exists() && !dir.mkdirs() && !dir.isDirectory()) throw new java.io.IOException("Не удалось создать cache превью");
+        String stableSource = RemoteFileSource.stableUrl(sourceUrl);
+        String identity = stableIdentity(stableSource);
+        String digest = sha256(accountId + "|" + maxDimension + "|" + identity);
+        File dir = indexDir(app);
         File dst = new File(dir, digest + ".jpg");
 
         Bitmap cached = decode(dst);
         if (cached != null) {
-            dst.setLastModified(System.currentTimeMillis());
+            touch(dst);
             return cached;
         }
         if (dst.exists()) dst.delete();
+
+        // One-time lazy migration from the old disposable cache. This preserves already downloaded
+        // previews where the legacy key is still compatible.
+        migrateLegacyIfPresent(app, accountId, stableSource, maxDimension, dst);
+        cached = decode(dst);
+        if (cached != null) {
+            touch(dst);
+            return cached;
+        }
 
         Object lock = LOCKS.computeIfAbsent(digest, k -> new Object());
         try {
             synchronized (lock) {
                 cached = decode(dst);
                 if (cached != null) {
-                    dst.setLastModified(System.currentTimeMillis());
+                    touch(dst);
                     return cached;
                 }
 
-                File original = ImageDiskCache.get(app, accountId, stable);
+                File original = ImageDiskCache.get(app, accountId, stableSource);
                 Bitmap source = decodeSampled(original, Math.max(maxDimension, 256));
                 if (source == null) throw new java.io.IOException("Не удалось декодировать превью");
                 Bitmap thumb = fit(source, maxDimension);
@@ -54,23 +76,85 @@ final class ThumbnailDiskCache {
                 File tmp = new File(dir, digest + ".part");
                 if (tmp.exists()) tmp.delete();
                 try (FileOutputStream out = new FileOutputStream(tmp)) {
-                    if (!thumb.compress(Bitmap.CompressFormat.JPEG, 84, out)) throw new java.io.IOException("Не удалось сохранить превью");
+                    if (!thumb.compress(Bitmap.CompressFormat.JPEG, 86, out))
+                        throw new java.io.IOException("Не удалось сохранить превью");
                     out.getFD().sync();
                 }
                 if (dst.exists()) dst.delete();
                 if (!tmp.renameTo(dst)) {
-                    try (java.io.FileInputStream in = new java.io.FileInputStream(tmp); FileOutputStream out = new FileOutputStream(dst)) {
-                        byte[] b = new byte[32 * 1024]; int n; while ((n = in.read(b)) != -1) out.write(b, 0, n);
-                    }
+                    copy(tmp, dst);
                     tmp.delete();
                 }
-                dst.setLastModified(System.currentTimeMillis());
-                prune(dir, dst);
+                touch(dst);
+                lowStorageGuard(dir, dst);
                 return thumb;
             }
         } finally {
             LOCKS.remove(digest, lock);
         }
+    }
+
+    static long sizeBytes(Context context) {
+        if (context == null) return 0;
+        File dir = new File(context.getApplicationContext().getFilesDir(), DIR_NAME);
+        File[] files = dir.listFiles((d, n) -> n.endsWith(".jpg"));
+        if (files == null) return 0;
+        long total = 0;
+        for (File f : files) total += Math.max(0, f.length());
+        return total;
+    }
+
+    static int itemCount(Context context) {
+        if (context == null) return 0;
+        File dir = new File(context.getApplicationContext().getFilesDir(), DIR_NAME);
+        File[] files = dir.listFiles((d, n) -> n.endsWith(".jpg"));
+        return files == null ? 0 : files.length;
+    }
+
+    private static File indexDir(Context app) throws Exception {
+        File dir = new File(app.getFilesDir(), DIR_NAME);
+        if (!dir.exists() && !dir.mkdirs() && !dir.isDirectory())
+            throw new java.io.IOException("Не удалось создать постоянный индекс превью");
+        return dir;
+    }
+
+    private static String stableIdentity(String value) {
+        String fileId = RemoteFileSource.extractFileId(value);
+        if (fileId != null && !fileId.trim().isEmpty()) return "file:" + fileId.trim();
+        if (value == null) return "";
+        String s = value.trim();
+        try {
+            Uri u = Uri.parse(s);
+            if (("https".equalsIgnoreCase(u.getScheme()) || "http".equalsIgnoreCase(u.getScheme())) && u.getHost() != null) {
+                // Signed download URLs usually rotate only query tokens/signatures. Keep the stable
+                // origin + path so the same remote image reuses the same thumbnail after re-login.
+                String path = u.getEncodedPath();
+                return u.getScheme().toLowerCase(Locale.ROOT) + "://" + u.getHost().toLowerCase(Locale.ROOT) +
+                        (path == null ? "" : path);
+            }
+        } catch (Exception ignored) {}
+        return s;
+    }
+
+    private static void migrateLegacyIfPresent(Context app, long accountId, String stableSource,
+                                               int maxDimension, File dst) {
+        if (dst.exists()) return;
+        try {
+            String oldDigest = sha256(accountId + "|" + maxDimension + "|" + stableSource);
+            File old = new File(new File(app.getCacheDir(), LEGACY_DIR_NAME), oldDigest + ".jpg");
+            if (!old.isFile() || old.length() <= 0) return;
+            File tmp = new File(dst.getParentFile(), dst.getName() + ".migrate");
+            copy(old, tmp);
+            if (decode(tmp) == null) {
+                tmp.delete();
+                return;
+            }
+            if (!tmp.renameTo(dst)) {
+                copy(tmp, dst);
+                tmp.delete();
+            }
+            touch(dst);
+        } catch (Exception ignored) {}
     }
 
     private static Bitmap decode(File file) {
@@ -103,21 +187,42 @@ final class ThumbnailDiskCache {
         return Bitmap.createScaledBitmap(source, w, h, true);
     }
 
-    private static void prune(File dir, File protectedFile) {
+    /**
+     * No quota-based pruning. We only protect the phone from genuinely running out of space.
+     * If free space falls below 768 MiB, delete least-recently-used thumbnails until roughly
+     * 1.5 GiB is free again. This means 768 MiB is not an index ceiling.
+     */
+    private static void lowStorageGuard(File dir, File protectedFile) {
         if (dir == null || !dir.isDirectory()) return;
         synchronized (PRUNE_LOCK) {
+            long free = dir.getUsableSpace();
+            if (free >= MIN_FREE_BYTES) return;
             File[] files = dir.listFiles((d, n) -> n.endsWith(".jpg"));
-            if (files == null) return;
-            long total = 0;
-            for (File f : files) total += Math.max(0, f.length());
-            if (total <= MAX_BYTES) return;
+            if (files == null || files.length == 0) return;
             Arrays.sort(files, Comparator.comparingLong(File::lastModified));
             for (File f : files) {
-                if (total <= TARGET_BYTES) break;
-                if (protectedFile != null && f.getAbsolutePath().equals(protectedFile.getAbsolutePath())) continue;
-                long size = Math.max(0, f.length());
-                if (f.delete()) total -= size;
+                if (dir.getUsableSpace() >= TARGET_FREE_BYTES) break;
+                if (protectedFile != null && sameFile(f, protectedFile)) continue;
+                f.delete();
             }
+        }
+    }
+
+    private static void touch(File file) {
+        if (file != null) file.setLastModified(System.currentTimeMillis());
+    }
+
+    private static boolean sameFile(File a, File b) {
+        try { return a.getCanonicalPath().equals(b.getCanonicalPath()); }
+        catch (Exception e) { return a.getAbsolutePath().equals(b.getAbsolutePath()); }
+    }
+
+    private static void copy(File from, File to) throws Exception {
+        try (FileInputStream in = new FileInputStream(from); FileOutputStream out = new FileOutputStream(to)) {
+            byte[] b = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(b)) != -1) out.write(b, 0, n);
+            out.getFD().sync();
         }
     }
 
