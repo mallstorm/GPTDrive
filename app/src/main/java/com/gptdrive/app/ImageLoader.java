@@ -7,10 +7,13 @@ import android.util.LruCache;
 import android.widget.ImageView;
 
 import java.io.File;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Stable preview loader: small thumbnails are persistent and can load concurrently. */
+/** Stable preview loader backed by the persistent Thumbnail Index. */
 final class ImageLoader {
     interface Callback { void onLoaded(Bitmap bitmap); }
 
@@ -18,6 +21,7 @@ final class ImageLoader {
     private static final int VIEWER_MAX = 2560;
     private static final ExecutorService THUMB_EXEC = Executors.newFixedThreadPool(4);
     private static final ExecutorService VIEWER_EXEC = Executors.newFixedThreadPool(2);
+    private static final Set<String> PREFETCHING = ConcurrentHashMap.newKeySet();
     private static final LruCache<String, Bitmap> CACHE = new LruCache<String, Bitmap>(48 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) {
             return Math.max(1, value.getByteCount() / 1024);
@@ -52,6 +56,38 @@ final class ImageLoader {
                 if (b != null && !b.isRecycled() && stable.equals(tag)) view.setImageBitmap(b);
             });
         });
+    }
+
+    static void prefetchThumb(Context context, long accountId, String url) {
+        if (context == null || url == null || url.trim().isEmpty()) return;
+        Context app = context.getApplicationContext();
+        String stable = RemoteFileSource.stableUrl(url);
+        String key = cacheKey(accountId, stable, THUMB_MAX);
+        Bitmap cached = CACHE.get(key);
+        if (cached != null && !cached.isRecycled()) return;
+        if (!PREFETCHING.add(key)) return;
+        THUMB_EXEC.execute(() -> {
+            try {
+                Bitmap b = fetchThumb(app, accountId, stable);
+                if (b != null) CACHE.put(key, b);
+            } finally {
+                PREFETCHING.remove(key);
+            }
+        });
+    }
+
+    static void prefetchAround(Context context, long accountId, List<DriveItem> gallery, int center, int radius) {
+        if (context == null || gallery == null || gallery.isEmpty()) return;
+        int r = Math.max(1, radius);
+        int from = Math.max(0, center - r);
+        int to = Math.min(gallery.size() - 1, center + r);
+        // Current and nearest neighbours first, then the rest of the window.
+        for (int delta = 0; delta <= r; delta++) {
+            int left = center - delta;
+            int right = center + delta;
+            if (left >= from && left < gallery.size()) prefetchThumb(context, accountId, gallery.get(left).url);
+            if (delta > 0 && right <= to && right < gallery.size()) prefetchThumb(context, accountId, gallery.get(right).url);
+        }
     }
 
     static void load(String url, Callback callback) {
