@@ -41,4 +41,17 @@ public class ChatGptResponseParserTest {
         assertEquals("conv1", merged.conversationId);
         assertTrue(merged.isImage());
     }
+
+    @Test public void filtersInternalUserStoragePaths() throws Exception {
+        ChatGptModels.RemoteFile f = ChatGptResponseParser.mapToRemote(new JSONObject(
+                "{\"file_id\":\"file_internal123\",\"name\":\"user-LcNbBJ8UFHlortegjedzlgMK/4a4975ff7a4048e4b18911589edf213b/item\",\"mime_type\":\"image/png\"}"));
+        assertNull(f);
+    }
+
+    @Test public void keepsNormalUserFilename() throws Exception {
+        ChatGptModels.RemoteFile f = ChatGptResponseParser.mapToRemote(new JSONObject(
+                "{\"file_id\":\"file_normal123\",\"name\":\"Screenshot.png\",\"mime_type\":\"image/png\"}"));
+        assertNotNull(f);
+        assertEquals("Screenshot.png", f.name);
+    }
 }

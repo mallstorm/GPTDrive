@@ -7,7 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 
-/** Loads remote snapshots first, then atomically swaps normalized local state. */
+/** Metadata-only cloud index synchronizer. File bodies are never downloaded here. */
 final class ChatGptSyncCoordinator {
     static final class Result {
         final int library, images, projects, archived, pages, libraryStrategy;
@@ -53,7 +53,7 @@ final class ChatGptSyncCoordinator {
         try {
             library = provider.loadLibrary(250, progress);
         } catch (Exception e) {
-            db.recordSyncState(accountId, "Library", false, 0, message(e), "");
+            db.recordSyncState(accountId, "Library", false, 0, message(e), "mode=metadata-only");
             throw e;
         }
         LinkedHashMap<String, ChatGptModels.RemoteFile> files = ChatGptModels.map(library.files);
@@ -64,7 +64,7 @@ final class ChatGptSyncCoordinator {
             for (ChatGptModels.RemoteFile f : provider.loadImages(progress)) ChatGptModels.merge(files, f);
             imagesFresh = true;
         } catch (ChatGptProvider.AuthException e) {
-            db.recordSyncState(accountId, "Images", false, 0, message(e), "");
+            db.recordSyncState(accountId, "Images", false, 0, message(e), "mode=metadata-only");
             throw e;
         } catch (Exception e) {
             imageError = message(e);
@@ -79,7 +79,7 @@ final class ChatGptSyncCoordinator {
                 for (ChatGptModels.RemoteFile f : p.files) ChatGptModels.merge(files, f);
             projectsFresh = true;
         } catch (ChatGptProvider.AuthException e) {
-            db.recordSyncState(accountId, "Projects", false, 0, message(e), "");
+            db.recordSyncState(accountId, "Projects", false, 0, message(e), "mode=metadata-only");
             throw e;
         } catch (Exception e) {
             projectError = message(e);
@@ -92,43 +92,21 @@ final class ChatGptSyncCoordinator {
             archived = provider.loadArchived();
             archivedFresh = true;
         } catch (ChatGptProvider.AuthException e) {
-            db.recordSyncState(accountId, "Archived", false, 0, message(e), "");
+            db.recordSyncState(accountId, "Archived", false, 0, message(e), "mode=metadata-only");
             throw e;
         } catch (Exception e) {
             archiveError = message(e);
         }
 
-        // Mirror is refreshed before the normalized file swap so newly discovered conversation
-        // attachments become first-class files during the same sync pass.
-        boolean mirrorFresh = false;
-        String mirrorError = "";
-        int conversationCount = 0;
-        int mirroredChats = 0;
-        int mirrorPending = 0;
-        int mirrorMissing = 0;
-        ChatMirrorRepository mirrorRepo = new ChatMirrorRepository(context, db, accountId);
-        ChatAttachmentRepository attachmentRepo = new ChatAttachmentRepository(db, accountId);
-        try {
-            ChatMirrorSyncEngine.Result mr = new ChatMirrorSyncEngine(context, db, accountId, provider)
-                    .sync(archivedFresh ? archived : null, ChatMirrorSyncEngine.DEFAULT_BODY_BUDGET, progress);
-            mirrorFresh = true;
-            conversationCount = mr.summaries;
-            mirroredChats = mr.stats.mirrored;
-            mirrorPending = mr.stats.pending;
-            mirrorMissing = mr.stats.missingRemote;
-        } catch (Exception e) {
-            mirrorError = message(e);
-            ChatMirrorRepository.Stats stats = mirrorRepo.stats();
-            conversationCount = stats.remotePresent;
-            mirroredChats = stats.mirrored;
-            mirrorPending = stats.pending;
-            mirrorMissing = stats.missingRemote;
-        }
-
-        List<ChatGptModels.RemoteFile> conversationAttachments = attachmentRepo.listAll();
-        if (projectsFresh && projects != null)
-            linkConversationAttachmentsToProjects(projects, conversationAttachments);
-        for (ChatGptModels.RemoteFile f : conversationAttachments) ChatGptModels.merge(files, f);
+        // Normal sync intentionally does NOT fetch /conversation/<id> bodies. Older builds
+        // downloaded full chat snapshots in batches and then indexed their internal asset paths.
+        // GPT Drive is a cloud index first: bodies are fetched only when a user explicitly opens
+        // or downloads a concrete object.
+        final boolean mirrorFresh = true;
+        final int conversationCount = 0;
+        final int mirroredChats = 0;
+        final int mirrorPending = 0;
+        final int mirrorMissing = 0;
 
         ArrayList<ChatGptModels.RemoteFile> allFiles = new ArrayList<>(files.values());
         int imageCount = 0;
@@ -149,58 +127,44 @@ final class ChatGptSyncCoordinator {
             sql.endTransaction();
         }
 
+        // v0.10.3 and older could leave full gzip conversation mirrors and derived attachment
+        // relations on the phone. Metadata-only mode removes those leftovers after the new remote
+        // index has been committed, so an in-place upgrade does not keep an unwanted local mirror.
+        try { new ChatMirrorRepository(context, db, accountId).deleteAccountMirror(); }
+        catch (Exception ignored) {}
+        try {
+            new ChatAttachmentRepository(db, accountId); // ensures legacy table exists before delete
+            db.getWritableDatabase().delete("chat_attachments", "account_id=?",
+                    new String[]{Long.toString(accountId)});
+        } catch (Exception ignored) {}
+
         db.pruneFalsePositives(accountId);
         IndexMaintenance.pruneTransientSignedUrls(db, accountId);
         db.markSynced(accountId);
 
         db.recordSyncState(accountId, "Library", true, allFiles.size(), "",
                 "pages=" + library.pages + ";strategy=" + library.strategy +
-                        ";conversation_attachments=" + conversationAttachments.size());
+                        ";mode=metadata-only;body_downloads=0");
         db.recordSyncState(accountId, "Images", imagesFresh, imageCount, imageError,
-                imagesFresh ? "merged=file_id" : "previous_image_gen_rows_preserved=true");
+                imagesFresh ? "mode=metadata-only;merged=file_id" : "previous_image_gen_rows_preserved=true");
 
         int projectCount = projectsFresh && projects != null
                 ? projects.size() : (int) db.count(accountId, "Projects");
         db.recordSyncState(accountId, "Projects", projectsFresh, projectCount, projectError,
-                projectsFresh ? "relations=project_files;chat_links=" + attachmentRepo.projectLinkCount()
-                        : "previous_snapshot_preserved=true");
+                projectsFresh ? "mode=metadata-only;relations=project_files" : "previous_snapshot_preserved=true");
 
         int archivedCount = archivedFresh && archived != null
                 ? archived.size() : (int) db.count(accountId, "Archived");
         db.recordSyncState(accountId, "Archived", archivedFresh, archivedCount, archiveError,
-                archivedFresh ? "table=conversations" : "previous_snapshot_preserved=true");
+                archivedFresh ? "mode=metadata-only;table=conversations" : "previous_snapshot_preserved=true");
 
-        ChatMirrorRepository.Stats finalMirrorStats = mirrorRepo.stats();
-        db.recordSyncState(accountId, "ChatMirror", mirrorFresh, mirroredChats, mirrorError,
-                "remote=" + finalMirrorStats.remotePresent +
-                        ";pending=" + finalMirrorStats.pending +
-                        ";missing=" + finalMirrorStats.missingRemote +
-                        ";bytes=" + finalMirrorStats.bytes +
-                        ";attachments=" + attachmentRepo.count() +
-                        ";project_links=" + attachmentRepo.projectLinkCount() +
-                        (mirrorFresh ? "" : ";previous_snapshots_preserved=true"));
+        db.recordSyncState(accountId, "ChatMirror", true, 0, "",
+                "mode=metadata-only;body_downloads=0;full_chat_mirror_disabled=true;legacy_mirror_removed=true");
 
         return new Result(allFiles.size(), imageCount, projectCount, archivedCount,
                 library.pages, library.strategy,
                 conversationCount, mirroredChats, mirrorPending, mirrorMissing,
                 imagesFresh, projectsFresh, archivedFresh, mirrorFresh);
-    }
-
-    private static void linkConversationAttachmentsToProjects(List<ChatGptModels.RemoteProject> projects,
-                                                              List<ChatGptModels.RemoteFile> attachments) {
-        if (projects == null || attachments == null) return;
-        for (ChatGptModels.RemoteFile f : attachments) {
-            if (f == null || f.identity().isEmpty()) continue;
-            for (ChatGptModels.RemoteProject p : projects) {
-                if (p == null || p.id == null || p.id.trim().isEmpty()) continue;
-                boolean direct = p.id.equals(f.projectId);
-                boolean byConversation = !f.conversationId.isEmpty() && p.conversationIds.contains(f.conversationId);
-                if (!direct && !byConversation) continue;
-                f.projectId = p.id;
-                f.sourceFlags |= ChatGptModels.SRC_PROJECT;
-                p.files.add(f);
-            }
-        }
     }
 
     private static String message(Throwable e) {

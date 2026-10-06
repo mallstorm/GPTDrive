@@ -53,6 +53,7 @@ final class ChatGptResponseParser {
         String libraryFileId = firstStringDeep(o, "library_file_id", "libraryFileId");
         String id = ChatGptModels.first(fileId, libraryFileId, firstStringDeep(o, "id"));
         String name = firstStringDeep(o, "file_name", "filename", "fileName", "name", "title");
+        if (looksInternalStorageName(name)) return null;
         if (fileId.isEmpty() && (id.isEmpty() || name.isEmpty())) return null;
         String lower = id.toLowerCase(Locale.ROOT);
         if (fileId.isEmpty() && libraryFileId.isEmpty() && !lower.startsWith("file_") && !lower.startsWith("file-")) return null;
@@ -77,6 +78,14 @@ final class ChatGptResponseParser {
         f.mimeType = f.mimeType.isEmpty() ? guessMime(f.name, rawUrl) : f.mimeType;
         f.sourceFlags = ChatGptModels.SRC_LIBRARY;
         return f;
+    }
+
+    private static boolean looksInternalStorageName(String value) {
+        String s = clean(value).replace('\\', '/');
+        if (s.isEmpty() || !s.contains("/")) return false;
+        String lower = s.toLowerCase(Locale.ROOT);
+        return lower.startsWith("user-") || lower.startsWith("file-service://") ||
+                lower.startsWith("sediment://") || lower.startsWith("asset-pointer://");
     }
 
     private static void walk(Object node, LinkedHashMap<String, ChatGptModels.RemoteFile> out, int depth) {

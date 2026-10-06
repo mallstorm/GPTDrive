@@ -17,7 +17,7 @@ import android.widget.TextView;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Native synchronization host. Authentication is handled by the embedded ChatGPT session flow. */
+/** Native synchronization host. Normal sync is metadata-only; file bodies are on-demand. */
 public final class BrowserActivity extends Activity {
     public static final String EXTRA_SECTION = "section";
     public static final String EXTRA_URL = "url";
@@ -100,7 +100,7 @@ public final class BrowserActivity extends Activity {
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.addView(text("GPT Drive", 20, true, TEXT));
-        titles.addView(text("Native API Sync · " + AppIdentity.providerLabel(), 10, false, MUTED));
+        titles.addView(text("Metadata Sync · " + AppIdentity.providerLabel(), 10, false, MUTED));
         header.addView(titles, new LinearLayout.LayoutParams(0, dp(52), 1));
         TextView close = text("×", 27, false, MUTED);
         close.setGravity(Gravity.CENTER);
@@ -119,7 +119,7 @@ public final class BrowserActivity extends Activity {
         AccountProfile a = db.accountById(accountId);
         syncAccount = text(a == null ? "ChatGPT" : a.displayName() + "  ·  " + a.planLabel(), 15, true, TEXT);
         card.addView(syncAccount);
-        syncStatus = text("Подготовка native API…", 12, false, MUTED);
+        syncStatus = text("Подготовка метаданных…", 12, false, MUTED);
         syncStatus.setPadding(0, dp(5), 0, 0);
         card.addView(syncStatus);
 
@@ -137,7 +137,7 @@ public final class BrowserActivity extends Activity {
         stats.addView(syncBytes, new LinearLayout.LayoutParams(0, dp(34), 1));
         card.addView(stats);
 
-        TextView note = text("Library читается напрямую через backend API. Успех показывается только после валидного JSON-ответа Library; HTML, WARNING_BANNER и неизвестная схема считаются ошибкой, а не пустой синхронизацией.", 10, false, MUTED);
+        TextView note = text("Синхронизация обновляет только каталог: имена, размеры, типы, проекты и ссылки. Содержимое файлов и полные истории чатов на телефон не скачиваются. Превью и файлы загружаются только по запросу.", 10, false, MUTED);
         note.setPadding(0, dp(10), 0, 0);
         note.setLineSpacing(0, 1.12f);
         card.addView(note);
@@ -168,7 +168,7 @@ public final class BrowserActivity extends Activity {
         syncButton.setAlpha(.55f);
         syncButton.setText("Идёт синхронизация…");
         syncStatus.setTextColor(MUTED);
-        setStatus("Подключаюсь к ChatGPT backend…", 0);
+        setStatus("Получаю метаданные ChatGPT…", 0);
         worker.execute(() -> {
             try {
                 ChatGptApiClient client = new ChatGptApiClient(this, db, accountId);
@@ -227,28 +227,23 @@ public final class BrowserActivity extends Activity {
         AccountProfile a = db.accountById(accountId);
         if (a != null) syncAccount.setText(a.displayName() + "  ·  " + a.planLabel());
 
-        if (r.fullyFresh() && r.mirrorFresh) {
+        if (r.fullyFresh()) {
             syncStatus.setTextColor(MUTED);
             syncStatus.setText("Готово · Library " + r.library + " · Images " + r.images +
-                    " · Projects " + r.projects + " · Archive " + r.archived +
-                    " · Mirror " + r.mirroredChats + "/" + r.conversations);
+                    " · Projects " + r.projects + " · Archive " + r.archived + " · без скачивания файлов");
             syncButton.setText("Готово");
         } else {
-            StringBuilder warning = new StringBuilder("Library синхронизирована и проверена");
+            StringBuilder warning = new StringBuilder("Library синхронизирована");
             if (!r.imagesFresh) warning.append(" · Images: сохранён предыдущий снимок");
             if (!r.projectsFresh) warning.append(" · Projects: сохранён предыдущий снимок");
             if (!r.archivedFresh) warning.append(" · Archive: сохранён предыдущий снимок");
-            if (!r.mirrorFresh) warning.append(" · Chat Mirror: локальный архив сохранён");
             syncStatus.setTextColor(WARNING);
             syncStatus.setText(warning.toString());
             syncButton.setText("Готово с предупреждением");
         }
 
         String strategy = r.libraryStrategy < 0 ? "initial" : Integer.toString(r.libraryStrategy);
-        String mirror = " · Mirror " + r.mirroredChats + "/" + r.conversations;
-        if (r.mirrorPending > 0) mirror += " (ещё " + r.mirrorPending + ")";
-        if (r.mirrorMissing > 0) mirror += " · локально сохранено удалённых: " + r.mirrorMissing;
-        syncCount.setText("Library pages: " + r.pages + " · strategy " + strategy + mirror);
+        syncCount.setText("Library pages: " + r.pages + " · strategy " + strategy + " · metadata-only");
         syncBytes.setText(storageText());
         bars.setActive(false);
         syncButton.setEnabled(true);
@@ -277,7 +272,7 @@ public final class BrowserActivity extends Activity {
         AccountProfile a = db.accountById(accountId);
         if (a != null && a.hasRemoteQuota()) return MainActivity.formatBytes(a.remoteUsedBytes) + " / " + MainActivity.formatBytes(a.remoteQuotaBytes);
         long known = db.knownStorageBytes(accountId);
-        return known > 0 ? "Индекс: " + MainActivity.formatBytes(known) : "Объём: —";
+        return known > 0 ? "Удалённые файлы: " + MainActivity.formatBytes(known) : "Удалённый объём: —";
     }
 
     private void finishDone() {
