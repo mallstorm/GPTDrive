@@ -10,11 +10,12 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Small on-demand preview cache. It is not an offline mirror of the user's cloud. */
+/** Small on-demand preview cache. Never acts as an offline mirror. */
 final class ImageDiskCache {
     private static final long MAX_BYTES = 40L * 1024L * 1024L;
     private static final long TARGET_BYTES = 24L * 1024L * 1024L;
     private static final ConcurrentHashMap<String, Object> LOCKS = new ConcurrentHashMap<>();
+    private static final Object PRUNE_LOCK = new Object();
 
     private ImageDiskCache() {}
 
@@ -26,8 +27,7 @@ final class ImageDiskCache {
         File dir = new File(app.getCacheDir(), "gptdrive-images");
         if (!dir.exists() && !dir.mkdirs() && !dir.isDirectory())
             throw new java.io.IOException("Не удалось создать image cache");
-        // Also trims oversized caches produced by older builds before another preview is fetched.
-        prune(dir);
+
         File dst = new File(dir, digest + ".bin");
         if (dst.isFile() && dst.length() > 0) {
             dst.setLastModified(System.currentTimeMillis());
@@ -62,7 +62,9 @@ final class ImageDiskCache {
                     tmp.delete();
                 }
                 dst.setLastModified(System.currentTimeMillis());
-                prune(dir);
+
+                // Never delete the file that is about to be decoded by this caller.
+                prune(dir, dst);
                 return dst;
             }
         } finally {
@@ -78,18 +80,33 @@ final class ImageDiskCache {
         } catch (Exception ignored) {}
     }
 
-    private static void prune(File dir) {
-        File[] files = dir.listFiles((d, name) -> name.endsWith(".bin"));
-        if (files == null || files.length == 0) return;
-        long total = 0;
-        for (File f : files) total += Math.max(0, f.length());
-        if (total <= MAX_BYTES) return;
-        Arrays.sort(files, Comparator.comparingLong(File::lastModified));
-        for (File f : files) {
-            if (total <= TARGET_BYTES) break;
-            long size = Math.max(0, f.length());
-            if (f.delete()) total -= size;
+    static void trim(Context context) {
+        if (context == null) return;
+        File dir = new File(context.getApplicationContext().getCacheDir(), "gptdrive-images");
+        prune(dir, null);
+    }
+
+    private static void prune(File dir, File protectedFile) {
+        if (dir == null || !dir.isDirectory()) return;
+        synchronized (PRUNE_LOCK) {
+            File[] files = dir.listFiles((d, name) -> name.endsWith(".bin"));
+            if (files == null || files.length == 0) return;
+            long total = 0;
+            for (File f : files) total += Math.max(0, f.length());
+            if (total <= MAX_BYTES) return;
+            Arrays.sort(files, Comparator.comparingLong(File::lastModified));
+            for (File f : files) {
+                if (total <= TARGET_BYTES) break;
+                if (protectedFile != null && sameFile(f, protectedFile)) continue;
+                long size = Math.max(0, f.length());
+                if (f.delete()) total -= size;
+            }
         }
+    }
+
+    private static boolean sameFile(File a, File b) {
+        try { return a.getCanonicalPath().equals(b.getCanonicalPath()); }
+        catch (Exception e) { return a.getAbsolutePath().equals(b.getAbsolutePath()); }
     }
 
     private static void copy(File from, File to) throws Exception {
