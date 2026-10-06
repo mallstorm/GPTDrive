@@ -13,9 +13,12 @@ import android.webkit.WebViewClient;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-/** Real ChatGPT Recently Deleted surface inside GPT Drive. Destructive operations stay on ChatGPT's own confirmed UI. */
+/** Authenticated ChatGPT Library surface used for real trash/restore and guarded destructive handoff. */
 public final class DeletedLibraryActivity extends Activity {
     public static final String EXTRA_ACCOUNT_ID = "account_id";
+    public static final String EXTRA_URL = "url";
+    public static final String EXTRA_TITLE = "title";
+    public static final String EXTRA_NOTE = "note";
     private static final int TEXT = 0xFF101828;
     private static final int MUTED = 0xFF667085;
     private static final int BG = 0xFFF7F9FA;
@@ -23,6 +26,13 @@ public final class DeletedLibraryActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         long accountId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, new DriveDb(this).activeAccountId());
+        String url = getIntent().getStringExtra(EXTRA_URL);
+        if (url == null || !url.startsWith("https://chatgpt.com/library")) url = "https://chatgpt.com/library?deleted=true";
+        String heading = getIntent().getStringExtra(EXTRA_TITLE);
+        if (heading == null || heading.trim().isEmpty()) heading = "Удалённые";
+        String noteText = getIntent().getStringExtra(EXTRA_NOTE);
+        if (noteText == null || noteText.trim().isEmpty())
+            noteText = "Это реальная корзина ChatGPT. Здесь можно восстановить материал или удалить его окончательно. Удалённые материалы хранятся до 30 дней.";
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -35,11 +45,12 @@ public final class DeletedLibraryActivity extends Activity {
         back.setGravity(Gravity.CENTER);
         back.setOnClickListener(v -> finish());
         bar.addView(back, new LinearLayout.LayoutParams(dp(42), dp(54)));
-        TextView title = text("Удалённые", 20, true);
+        TextView title = text(heading, 20, true);
+        title.setSingleLine(true);
         bar.addView(title, new LinearLayout.LayoutParams(0, dp(54), 1));
         root.addView(bar, new LinearLayout.LayoutParams(-1, dp(58)));
 
-        TextView note = text("Это реальная корзина ChatGPT. Здесь можно восстановить материал или удалить его окончательно. ChatGPT хранит удалённые материалы до 30 дней.", 10, false);
+        TextView note = text(noteText, 10, false);
         note.setTextColor(MUTED);
         note.setPadding(dp(14), dp(8), dp(14), dp(9));
         note.setBackground(round(Color.WHITE, 0, 0xFFE4E8EB, 1));
@@ -64,7 +75,7 @@ public final class DeletedLibraryActivity extends Activity {
             }
         } catch (Exception ignored) {}
 
-        web.loadUrl("https://chatgpt.com/library?deleted=true");
+        web.loadUrl(url);
         root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
     }
