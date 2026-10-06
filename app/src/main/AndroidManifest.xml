@@ -1,10 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
 
     <application
+        android:name=".GPTDriveApplication"
         android:allowBackup="false"
         android:label="GPT Drive"
         android:icon="@drawable/ic_drive"
@@ -12,6 +16,8 @@
         android:usesCleartextTraffic="false">
 
         <activity android:name=".AccountManagerActivity" android:exported="false"/>
+        <activity android:name=".SettingsActivity" android:exported="false"/>
+        <activity android:name=".AppLockActivity" android:exported="false" android:excludeFromRecents="true"/>
         <activity android:name=".SyncDiagnosticsActivity" android:exported="false"/>
         <activity android:name=".DnsSettingsActivity" android:exported="false"/>
         <activity android:name=".ChatGptOAuthActivity" android:exported="false"/>
@@ -26,7 +32,8 @@
         <activity android:name=".ExplorerActivity" android:exported="false"/>
         <activity android:name=".ExplorerActivityV2" android:exported="false"/>
         <activity android:name=".ExplorerActivityCompact" android:exported="false"/>
-        <activity android:name=".FolderHomeActivity" android:exported="true">
+        <activity android:name=".FolderHomeActivity" android:exported="false"/>
+        <activity android:name=".AppEntryActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -35,6 +42,10 @@
 
         <service
             android:name=".SyncForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
+        <service
+            android:name=".LibraryWatcherService"
             android:exported="false"
             android:foregroundServiceType="dataSync"/>
 
