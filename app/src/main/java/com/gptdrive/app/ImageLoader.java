@@ -10,12 +10,14 @@ import java.io.File;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/** Bounded on-demand image loading. Thumbnail traffic is serialized. */
 final class ImageLoader {
     interface Callback { void onLoaded(Bitmap bitmap); }
 
     private static final int THUMB_MAX = 512;
-    private static final int VIEWER_MAX = 2048;
-    private static final ExecutorService EXEC = Executors.newFixedThreadPool(4);
+    private static final int VIEWER_MAX = 2560;
+    private static final ExecutorService THUMB_EXEC = Executors.newSingleThreadExecutor();
+    private static final ExecutorService VIEWER_EXEC = Executors.newFixedThreadPool(2);
     private static final LruCache<String, Bitmap> CACHE = new LruCache<String, Bitmap>(24 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) {
             return Math.max(1, value.getByteCount() / 1024);
@@ -33,34 +35,41 @@ final class ImageLoader {
 
     static void load(ImageView view, long accountId, String url) {
         if (view == null || url == null) return;
-        String cacheKey = cacheKey(accountId, url, THUMB_MAX);
-        view.setTag(url);
+        String stable = RemoteFileSource.stableUrl(url);
+        String cacheKey = cacheKey(accountId, stable, THUMB_MAX);
+        view.setTag(stable);
         Bitmap cached = CACHE.get(cacheKey);
-        if (cached != null) { view.setImageBitmap(cached); return; }
+        if (cached != null) {
+            view.setImageBitmap(cached);
+            return;
+        }
         Context context = view.getContext().getApplicationContext();
-        EXEC.execute(() -> {
-            Bitmap b = fetch(context, accountId, url, THUMB_MAX);
+        THUMB_EXEC.execute(() -> {
+            Bitmap b = fetch(context, accountId, stable, THUMB_MAX);
             if (b != null) CACHE.put(cacheKey, b);
             view.post(() -> {
                 Object tag = view.getTag();
-                if (b != null && url.equals(tag)) view.setImageBitmap(b);
+                if (b != null && stable.equals(tag)) view.setImageBitmap(b);
             });
         });
     }
 
     static void load(String url, Callback callback) {
-        if (callback == null) return;
-        callback.onLoaded(null);
+        if (callback != null) callback.onLoaded(null);
     }
 
     static void load(Context context, long accountId, String url, Callback callback) {
         if (context == null || callback == null || url == null) return;
-        String cacheKey = cacheKey(accountId, url, VIEWER_MAX);
+        String stable = RemoteFileSource.stableUrl(url);
+        String cacheKey = cacheKey(accountId, stable, VIEWER_MAX);
         Bitmap cached = CACHE.get(cacheKey);
-        if (cached != null) { callback.onLoaded(cached); return; }
+        if (cached != null) {
+            callback.onLoaded(cached);
+            return;
+        }
         Context app = context.getApplicationContext();
-        EXEC.execute(() -> {
-            Bitmap b = fetch(app, accountId, url, VIEWER_MAX);
+        VIEWER_EXEC.execute(() -> {
+            Bitmap b = fetch(app, accountId, stable, VIEWER_MAX);
             if (b != null) CACHE.put(cacheKey, b);
             callback.onLoaded(b);
         });
@@ -76,7 +85,7 @@ final class ImageLoader {
             Bitmap decoded = decodeSampled(cached, maxDimension);
             if (decoded != null) return decoded;
 
-            // Corrupt/partial cache entries are never sticky. Resolve a fresh signed URL once more.
+            // Corrupt or partial cache entry: retry exactly once with a fresh signed URL.
             ImageDiskCache.invalidate(context, accountId, url);
             cached = ImageDiskCache.get(context, accountId, url);
             return decodeSampled(cached, maxDimension);
