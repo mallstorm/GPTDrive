@@ -11,6 +11,7 @@ import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -23,7 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** Native folder browser. Images are paged so entering the folder never downloads the whole cloud. */
+/** Native folder browser with metadata-only infinite paging and on-demand previews. */
 public final class NativeBrowserActivity extends Activity {
     public static final String EXTRA_CATEGORY = "category";
     public static final String EXTRA_ACCOUNT_ID = "account_id";
@@ -33,9 +34,9 @@ public final class NativeBrowserActivity extends Activity {
     private static final int TEXT = 0xFF101828;
     private static final int MUTED = 0xFF667085;
     private static final int BG = 0xFFF7F9FA;
-    private static final int IMAGE_PAGE = 12;
+    private static final int IMAGE_PAGE = 24;
+    private static final int LIST_PAGE = 40;
     private static final int SYNC_REQUEST = 3901;
-    private static final long AUTO_PREVIEW_MAX = 1024L * 1024L;
 
     private String category;
     private long accountId;
@@ -43,13 +44,18 @@ public final class NativeBrowserActivity extends Activity {
     private LinearLayout content;
     private TextView summary;
     private EditText search;
+    private ScrollView scroll;
     private List<DriveItem> all = new ArrayList<>();
     private boolean initialLoaded;
 
     private GridLayout imageGrid;
-    private TextView imageMore;
     private List<DriveItem> filteredImages = new ArrayList<>();
     private int imageShown;
+
+    private List<DriveItem> filteredList = new ArrayList<>();
+    private int listShown;
+    private TextView loadingFooter;
+    private boolean appending;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -62,7 +68,7 @@ public final class NativeBrowserActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        // Returning from the full-screen viewer must not rebuild the grid and erase previews.
+        // Returning from the viewer must not rebuild already visible cards or discard previews.
         if (!initialLoaded) {
             initialLoaded = true;
             reload();
@@ -126,8 +132,17 @@ public final class NativeBrowserActivity extends Activity {
             public void afterTextChanged(Editable e) {}
         });
 
-        ScrollView scroll = new ScrollView(this);
+        scroll = new ScrollView(this);
         scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setOnScrollChangeListener((v, sx, sy, oldx, oldy) -> {
+            if (sy <= oldy || appending) return;
+            View child = scroll.getChildAt(0);
+            if (child == null) return;
+            int remaining = child.getHeight() - (scroll.getHeight() + sy);
+            if (remaining <= dp(420)) appendNextPage();
+        });
+
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(14), 0, dp(14), dp(22));
@@ -137,7 +152,6 @@ public final class NativeBrowserActivity extends Activity {
     }
 
     private void reload() {
-        // Local metadata query only. Large folders are rendered page-by-page below.
         all = db.list(accountId, category, 5000);
         long files = 0;
         for (DriveItem x : all) if (!DriveActions.isLink(x)) files++;
@@ -148,6 +162,7 @@ public final class NativeBrowserActivity extends Activity {
     private void render() {
         if (content == null) return;
         content.removeAllViews();
+        appending = false;
         String q = search == null ? "" : search.getText().toString().trim().toLowerCase(Locale.ROOT);
         ArrayList<DriveItem> shown = new ArrayList<>();
         for (DriveItem x : all) {
@@ -168,32 +183,22 @@ public final class NativeBrowserActivity extends Activity {
         imageGrid = new GridLayout(this);
         imageGrid.setColumnCount(2);
         content.addView(imageGrid);
-
-        imageMore = text("", 11, true);
-        imageMore.setGravity(Gravity.CENTER);
-        imageMore.setTextColor(GREEN);
-        imageMore.setBackground(round(GREEN_SOFT, 13, 0, 0));
-        imageMore.setOnClickListener(v -> appendImagePage());
-        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(-1, dp(46));
-        mp.setMargins(dp(3), dp(8), dp(3), 0);
-        content.addView(imageMore, mp);
-
+        addLoadingFooter();
         appendImagePage();
     }
 
     private void appendImagePage() {
-        if (imageGrid == null || filteredImages == null) return;
+        if (imageGrid == null || filteredImages == null || imageShown >= filteredImages.size()) {
+            updateLoadingFooter();
+            return;
+        }
+        appending = true;
         int end = Math.min(filteredImages.size(), imageShown + IMAGE_PAGE);
         int width = (getResources().getDisplayMetrics().widthPixels - dp(40)) / 2;
         for (int i = imageShown; i < end; i++) addImageCell(filteredImages.get(i), width);
         imageShown = end;
-        if (imageShown >= filteredImages.size()) {
-            imageMore.setVisibility(View.GONE);
-        } else {
-            int next = Math.min(IMAGE_PAGE, filteredImages.size() - imageShown);
-            imageMore.setVisibility(View.VISIBLE);
-            imageMore.setText("Показать ещё " + next + "  •  " + imageShown + "/" + filteredImages.size());
-        }
+        appending = false;
+        updateLoadingFooter();
     }
 
     private void addImageCell(DriveItem x, int width) {
@@ -205,28 +210,25 @@ public final class NativeBrowserActivity extends Activity {
         cell.setOnClickListener(v -> DriveActions.open(this, x));
         cell.setOnLongClickListener(v -> { menu(v, x); return true; });
 
-        FrameLayoutCompat picture = new FrameLayoutCompat(this);
+        FrameLayout picture = new FrameLayout(this);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         image.setBackgroundColor(0xFFE9ECEF);
-        image.setClickable(false);
-        picture.addView(image, new android.widget.FrameLayout.LayoutParams(-1, -1));
-
-        boolean autoPreview = x.sizeBytes <= 0 || x.sizeBytes <= AUTO_PREVIEW_MAX;
-        if (autoPreview) {
-            ImageLoader.load(image, accountId, x.url);
-        } else {
-            TextView hint = text("Открыть", 10, true);
-            hint.setTextColor(0xFF667085);
-            hint.setGravity(Gravity.CENTER);
-            picture.addView(hint, new android.widget.FrameLayout.LayoutParams(-1, -1));
-        }
+        picture.addView(image, new FrameLayout.LayoutParams(-1, -1));
+        ImageLoader.load(image, accountId, x.url);
         cell.addView(picture, new LinearLayout.LayoutParams(-1, dp(132)));
 
+        LinearLayout nameRow = new LinearLayout(this);
+        nameRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView name = text(x.name, 11, true);
         name.setMaxLines(2);
-        name.setPadding(dp(4), dp(5), dp(4), 0);
-        cell.addView(name);
+        name.setPadding(dp(4), dp(5), dp(2), 0);
+        nameRow.addView(name, new LinearLayout.LayoutParams(0, dp(38), 1));
+        TextView more = text("⋮", 18, false);
+        more.setGravity(Gravity.CENTER);
+        more.setOnClickListener(v -> menu(v, x));
+        nameRow.addView(more, new LinearLayout.LayoutParams(dp(26), dp(38)));
+        cell.addView(nameRow);
 
         GridLayout.LayoutParams gp = new GridLayout.LayoutParams();
         gp.width = width;
@@ -236,39 +238,100 @@ public final class NativeBrowserActivity extends Activity {
     }
 
     private void renderList(List<DriveItem> items) {
+        filteredList = new ArrayList<>(items);
+        listShown = 0;
+        addLoadingFooter();
+        appendListPage();
+    }
+
+    private void appendListPage() {
+        if (filteredList == null || listShown >= filteredList.size()) {
+            updateLoadingFooter();
+            return;
+        }
+        appending = true;
+        int end = Math.min(filteredList.size(), listShown + LIST_PAGE);
         DateFormat df = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT);
-        for (DriveItem x : items) {
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(9), dp(7), dp(6), dp(7));
-            row.setBackground(round(Color.WHITE, 15, 0xFFE5E8EB, 1));
+        // Keep the loading row visually last while appending rows above it.
+        if (loadingFooter != null) content.removeView(loadingFooter);
+        for (int i = listShown; i < end; i++) addFileRow(filteredList.get(i), df);
+        listShown = end;
+        if (loadingFooter != null) content.addView(loadingFooter, loadingParams());
+        appending = false;
+        updateLoadingFooter();
+    }
+
+    private void addFileRow(DriveItem x, DateFormat df) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(9), dp(7), dp(6), dp(7));
+        row.setBackground(round(Color.WHITE, 15, 0xFFE5E8EB, 1));
+
+        FrameLayout preview = new FrameLayout(this);
+        preview.setBackground(round(DriveActions.isImage(x) ? 0xFFEAF4FE : 0xFFF0F2F4, 10, 0, 0));
+        if (DriveActions.isImage(x)) {
+            ImageView thumb = new ImageView(this);
+            thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            preview.addView(thumb, new FrameLayout.LayoutParams(-1, -1));
+            ImageLoader.load(thumb, accountId, x.url);
+        } else {
             ImageView icon = new ImageView(this);
-            icon.setImageResource(DriveActions.isImage(x) ? R.drawable.ic_image_24 : R.drawable.ic_folder_24);
-            icon.setColorFilter(DriveActions.isImage(x) ? 0xFF3B9DF5 : 0xFF667085);
-            icon.setPadding(dp(9), dp(9), dp(9), dp(9));
-            icon.setBackground(round(DriveActions.isImage(x) ? 0xFFEAF4FE : 0xFFF0F2F4, 10, 0, 0));
-            row.addView(icon, new LinearLayout.LayoutParams(dp(46), dp(46)));
+            icon.setImageResource(R.drawable.ic_folder_24);
+            icon.setColorFilter(0xFF667085);
+            icon.setPadding(dp(11), dp(11), dp(11), dp(11));
+            preview.addView(icon, new FrameLayout.LayoutParams(-1, -1));
+        }
+        row.addView(preview, new LinearLayout.LayoutParams(dp(52), dp(52)));
 
-            LinearLayout info = new LinearLayout(this);
-            info.setOrientation(LinearLayout.VERTICAL);
-            info.setGravity(Gravity.CENTER_VERTICAL);
-            info.setPadding(dp(9), 0, 0, 0);
-            TextView n = text(x.name, 13, true);
-            n.setMaxLines(1);
-            TextView m = text(DriveActions.shortType(x) + " • " + df.format(x.updated), 10, false);
-            m.setTextColor(MUTED);
-            info.addView(n);
-            info.addView(m);
-            row.addView(info, new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setGravity(Gravity.CENTER_VERTICAL);
+        info.setPadding(dp(9), 0, 0, 0);
+        TextView n = text(x.name, 13, true);
+        n.setMaxLines(1);
+        TextView m = text(DriveActions.shortType(x) + " • " + df.format(x.updated), 10, false);
+        m.setTextColor(MUTED);
+        info.addView(n);
+        info.addView(m);
+        row.addView(info, new LinearLayout.LayoutParams(0, dp(52), 1));
 
-            TextView more = text("⋮", 21, false);
-            more.setGravity(Gravity.CENTER);
-            more.setOnClickListener(v -> menu(v, x));
-            row.addView(more, new LinearLayout.LayoutParams(dp(34), dp(44)));
-            row.setOnClickListener(v -> DriveActions.open(this, x));
-            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(66));
-            rp.setMargins(0, 0, 0, dp(5));
-            content.addView(row, rp);
+        TextView more = text("⋮", 21, false);
+        more.setGravity(Gravity.CENTER);
+        more.setOnClickListener(v -> menu(v, x));
+        row.addView(more, new LinearLayout.LayoutParams(dp(34), dp(44)));
+        row.setOnClickListener(v -> DriveActions.open(this, x));
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(72));
+        rp.setMargins(0, 0, 0, dp(5));
+        content.addView(row, rp);
+    }
+
+    private void appendNextPage() {
+        if ("Images".equals(category)) appendImagePage();
+        else appendListPage();
+    }
+
+    private void addLoadingFooter() {
+        loadingFooter = text("", 10, false);
+        loadingFooter.setGravity(Gravity.CENTER);
+        loadingFooter.setTextColor(MUTED);
+        content.addView(loadingFooter, loadingParams());
+    }
+
+    private LinearLayout.LayoutParams loadingParams() {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(52));
+        p.setMargins(dp(3), dp(4), dp(3), dp(4));
+        return p;
+    }
+
+    private void updateLoadingFooter() {
+        if (loadingFooter == null) return;
+        int shown = "Images".equals(category) ? imageShown : listShown;
+        int total = "Images".equals(category) ? filteredImages.size() : filteredList.size();
+        if (shown >= total) {
+            loadingFooter.setVisibility(View.GONE);
+        } else {
+            loadingFooter.setVisibility(View.VISIBLE);
+            loadingFooter.setText("◌  Подгружаются ещё объекты…  " + shown + "/" + total);
         }
     }
 
@@ -352,9 +415,4 @@ public final class NativeBrowserActivity extends Activity {
     }
 
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
-
-    /** Tiny alias keeps the image-card code readable without an XML layout dependency. */
-    private static final class FrameLayoutCompat extends android.widget.FrameLayout {
-        FrameLayoutCompat(android.content.Context context) { super(context); }
-    }
 }
