@@ -1,5 +1,5 @@
 package com.gptdrive.app;
-import android.app.Activity;
+import androidx.fragment.app.FragmentActivity;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.WindowManager;
@@ -9,7 +9,7 @@ import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
 import androidx.core.content.ContextCompat;
 
-public final class UnlockActivity extends Activity {
+public final class UnlockActivity extends FragmentActivity {
     private TextView status; private int failures; private long blockedUntil;
     @Override protected void onCreate(Bundle b){super.onCreate(b);getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);build();if(AppLockManager.allowBiometric(this))biometric();}
     private void build(){
