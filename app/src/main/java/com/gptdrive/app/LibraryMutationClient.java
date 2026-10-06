@@ -2,6 +2,7 @@ package com.gptdrive.app;
 
 import android.content.Context;
 import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
 
 import org.json.JSONArray;
@@ -11,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /** Native ChatGPT Library mutations and Recently deleted discovery. */
@@ -61,9 +61,7 @@ final class LibraryMutationClient {
             try {
                 loadTrashCandidate(first, out);
                 if (!out.isEmpty()) break;
-            } catch (Exception e) {
-                last = e;
-            }
+            } catch (Exception e) { last = e; }
         }
         mergeShadow(out);
         if (out.isEmpty() && last != null && !hasShadow()) throw last;
@@ -78,8 +76,7 @@ final class LibraryMutationClient {
             if (r.code == 401 || r.code == 403) throw new java.io.IOException("Сессия ChatGPT недоступна (HTTP " + r.code + ")");
             if (r.code == 404 || r.code == 405) return;
             if (r.code != 200) throw new java.io.IOException("Удалённые: HTTP " + r.code);
-            String raw = r.bodyUtf8();
-            Object root = ChatGptResponseParser.parse(raw);
+            Object root = ChatGptResponseParser.parse(r.bodyUtf8());
             if (root == null) return;
             boolean trustedTrashEndpoint = endpoint.contains("/library/trash");
             walkDeleted(root, out, trustedTrashEndpoint, 0);
@@ -104,6 +101,7 @@ final class LibraryMutationClient {
         }
         if (r.code != 200 && r.code != 204) throw new java.io.IOException("Удаление: HTTP " + r.code);
         rememberShadow(item, lib);
+        removeLocalAfterTrash(item, lib);
         return true;
     }
 
@@ -112,6 +110,8 @@ final class LibraryMutationClient {
         HttpResponse r = request("POST", "/backend-api/files/library/files/" + Uri.encode(item.libraryFileId) + "/restore", null, false);
         if (r.code != 200 && r.code != 204) throw new java.io.IOException("Восстановление: HTTP " + r.code);
         forgetShadow(item.libraryFileId);
+        // Restored metadata should return to semantic folders without forcing the user to press Sync.
+        SyncForegroundService.start(app, accountId);
         return true;
     }
 
@@ -133,6 +133,27 @@ final class LibraryMutationClient {
                 "account_id=? AND file_id=?", new String[]{Long.toString(accountId), fid.trim()}, null, null, null, "1");
         try { return c.moveToFirst() ? safe(c.getString(0)) : ""; }
         finally { c.close(); }
+    }
+
+    private void removeLocalAfterTrash(DriveItem item, String lib) {
+        try {
+            DriveDb db = new DriveDb(app);
+            SQLiteDatabase sql = db.getWritableDatabase();
+            sql.beginTransaction();
+            try {
+                Cursor c = sql.query("files", new String[]{"id"}, "account_id=? AND library_file_id=?",
+                        new String[]{Long.toString(accountId), lib}, null, null, null);
+                ArrayList<Long> rows = new ArrayList<>();
+                try { while (c.moveToNext()) rows.add(c.getLong(0)); } finally { c.close(); }
+                for (Long row : rows) {
+                    sql.delete("project_files", "file_row_id=?", new String[]{Long.toString(row)});
+                    sql.delete("files", "id=?", new String[]{Long.toString(row)});
+                }
+                if (item != null && item.url != null && !item.url.isEmpty())
+                    sql.delete("items", "account_id=? AND url=?", new String[]{Long.toString(accountId), item.url});
+                sql.setTransactionSuccessful();
+            } finally { sql.endTransaction(); }
+        } catch (Exception ignored) {}
     }
 
     private HttpResponse request(String method, String endpoint, String payload, boolean retryable) throws Exception {
@@ -172,9 +193,8 @@ final class LibraryMutationClient {
             ChatGptModels.RemoteFile f = ChatGptResponseParser.mapToRemote(o);
             if (f != null) {
                 String fid = f.fileId.isEmpty() ? f.identity() : f.fileId;
-                String ref = f.stableUrl();
                 DriveItem di = new DriveItem(-Math.abs((lib + fid).hashCode()), accountId, "Deleted",
-                        f.name, ref, f.mimeType, f.sizeBytes, f.updatedAt, fid, lib, f.createdAt);
+                        f.name, f.stableUrl(), f.mimeType, f.sizeBytes, f.updatedAt, fid, lib, f.createdAt);
                 long deletedAt = readTime(o, "deleted_at", "trashed_at", "soft_deleted_at", "deletedAt", "trashedAt");
                 if (deletedAt <= 0) deletedAt = f.updatedAt > 0 ? f.updatedAt : System.currentTimeMillis();
                 out.put(lib, new TrashItem(di, lib, deletedAt));
