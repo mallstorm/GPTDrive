@@ -2,7 +2,7 @@ package com.gptdrive.app;
 
 /** Network/display identity kept in one place for this release. */
 final class AppIdentity {
-    static final String VERSION = "0.11.2";
+    static final String VERSION = "0.11.3";
 
     private AppIdentity() {}
 
