@@ -24,6 +24,7 @@ import android.widget.Toast;
 
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 /** Immersive on-demand image viewer with swipe navigation and compact media controls. */
@@ -139,7 +140,6 @@ public final class ImageViewerActivity extends Activity {
         bottomPanel = new LinearLayout(this);
         bottomPanel.setOrientation(LinearLayout.VERTICAL);
         bottomPanel.setPadding(dp(10), dp(8), dp(10), dp(10));
-        bottomPanel.setBackgroundColor(0xB5000000);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER);
@@ -158,7 +158,7 @@ public final class ImageViewerActivity extends Activity {
 
         FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, dp(132), Gravity.BOTTOM);
         bp.setMargins(dp(8), 0, dp(8), dp(8));
-        bottomPanel.setBackground(round(0xCC14171A, 22, 0x334FFFFFF, 1));
+        bottomPanel.setBackground(round(0xCC14171A, 22, 0x33FFFFFF, 1));
         root.addView(bottomPanel, bp);
 
         setContentView(root);
@@ -189,6 +189,7 @@ public final class ImageViewerActivity extends Activity {
         image.setImageDrawable(null);
         title.setText(item.name);
         counter.setText((index + 1) + " / " + gallery.size());
+        status.setOnClickListener(null);
         status.setText("Получаю изображение…");
         status.setVisibility(View.VISIBLE);
         rebuildThumbnails();
@@ -219,7 +220,7 @@ public final class ImageViewerActivity extends Activity {
             ImageView thumb = new ImageView(this);
             thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
             thumb.setBackground(round(i == index ? 0x3308A66D : 0xFF2A2E32, 9,
-                    i == index ? GREEN : 0x334FFFFFF, i == index ? 2 : 1));
+                    i == index ? GREEN : 0x33FFFFFF, i == index ? 2 : 1));
             thumb.setPadding(dp(2), dp(2), dp(2), dp(2));
             ImageLoader.load(thumb, x.accountId, x.url);
             thumb.setOnClickListener(v -> showIndex(target, false));
@@ -256,7 +257,7 @@ public final class ImageViewerActivity extends Activity {
     private void showInfo() {
         String dims = currentBitmap == null ? "—" : currentBitmap.getWidth() + " × " + currentBitmap.getHeight();
         String size = item.sizeBytes > 0 ? MainActivity.formatBytes(item.sizeBytes) : "—";
-        String date = item.updated > 0 ? DateFormat.getDateTimeInstance().format(item.updated) : "—";
+        String date = item.updated > 0 ? DateFormat.getDateTimeInstance().format(new Date(item.updated)) : "—";
         new AlertDialog.Builder(this)
                 .setTitle(item.name)
                 .setMessage("Размер изображения: " + dims + "\nФайл: " + size + "\nДата: " + date + "\nПозиция: " + (index + 1) + " / " + gallery.size())
