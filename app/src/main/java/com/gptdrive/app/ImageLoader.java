@@ -10,15 +10,15 @@ import java.io.File;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Bounded on-demand image loading. Thumbnail traffic is serialized. */
+/** Stable preview loader: small thumbnails are persistent and can load concurrently. */
 final class ImageLoader {
     interface Callback { void onLoaded(Bitmap bitmap); }
 
     private static final int THUMB_MAX = 512;
     private static final int VIEWER_MAX = 2560;
-    private static final ExecutorService THUMB_EXEC = Executors.newSingleThreadExecutor();
+    private static final ExecutorService THUMB_EXEC = Executors.newFixedThreadPool(4);
     private static final ExecutorService VIEWER_EXEC = Executors.newFixedThreadPool(2);
-    private static final LruCache<String, Bitmap> CACHE = new LruCache<String, Bitmap>(24 * 1024) {
+    private static final LruCache<String, Bitmap> CACHE = new LruCache<String, Bitmap>(48 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) {
             return Math.max(1, value.getByteCount() / 1024);
         }
@@ -39,17 +39,17 @@ final class ImageLoader {
         String cacheKey = cacheKey(accountId, stable, THUMB_MAX);
         view.setTag(stable);
         Bitmap cached = CACHE.get(cacheKey);
-        if (cached != null) {
+        if (cached != null && !cached.isRecycled()) {
             view.setImageBitmap(cached);
             return;
         }
         Context context = view.getContext().getApplicationContext();
         THUMB_EXEC.execute(() -> {
-            Bitmap b = fetch(context, accountId, stable, THUMB_MAX);
+            Bitmap b = fetchThumb(context, accountId, stable);
             if (b != null) CACHE.put(cacheKey, b);
             view.post(() -> {
                 Object tag = view.getTag();
-                if (b != null && stable.equals(tag)) view.setImageBitmap(b);
+                if (b != null && !b.isRecycled() && stable.equals(tag)) view.setImageBitmap(b);
             });
         });
     }
@@ -63,7 +63,7 @@ final class ImageLoader {
         String stable = RemoteFileSource.stableUrl(url);
         String cacheKey = cacheKey(accountId, stable, VIEWER_MAX);
         Bitmap cached = CACHE.get(cacheKey);
-        if (cached != null) {
+        if (cached != null && !cached.isRecycled()) {
             callback.onLoaded(cached);
             return;
         }
@@ -79,13 +79,24 @@ final class ImageLoader {
         return fetch(context, accountId, url, VIEWER_MAX);
     }
 
+    private static Bitmap fetchThumb(Context context, long accountId, String url) {
+        try {
+            return ThumbnailDiskCache.get(context, accountId, url, THUMB_MAX);
+        } catch (Exception first) {
+            try {
+                ImageDiskCache.invalidate(context, accountId, url);
+                return ThumbnailDiskCache.get(context, accountId, url, THUMB_MAX);
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+    }
+
     private static Bitmap fetch(Context context, long accountId, String url, int maxDimension) {
         try {
             File cached = ImageDiskCache.get(context, accountId, url);
             Bitmap decoded = decodeSampled(cached, maxDimension);
             if (decoded != null) return decoded;
-
-            // Corrupt or partial cache entry: retry exactly once with a fresh signed URL.
             ImageDiskCache.invalidate(context, accountId, url);
             cached = ImageDiskCache.get(context, accountId, url);
             return decodeSampled(cached, maxDimension);
@@ -100,12 +111,10 @@ final class ImageLoader {
         bounds.inJustDecodeBounds = true;
         BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
-
         int sample = 1;
         int largest = Math.max(bounds.outWidth, bounds.outHeight);
         int target = Math.max(128, maxDimension);
         while (largest / (sample * 2) >= target) sample *= 2;
-
         BitmapFactory.Options opts = new BitmapFactory.Options();
         opts.inSampleSize = Math.max(1, sample);
         opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
