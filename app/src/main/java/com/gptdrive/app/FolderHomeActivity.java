@@ -305,9 +305,10 @@ public final class FolderHomeActivity extends Activity {
 
     private void showMainMenu(View anchor) {
         showActionPopup(anchor,
-                new String[]{"Синхронизировать библиотеку", "Routing & DNS", "Android Files", "Аккаунты", "Удалённые"},
+                new String[]{"Синхронизировать библиотеку", "Безопасность", "Routing & DNS", "Android Files", "Аккаунты", "Удалённые"},
                 new Runnable[]{
                         () -> openSync("Library"),
+                        () -> startActivity(new Intent(this, SecurityActivity.class)),
                         () -> startActivity(new Intent(this, DnsSettingsActivity.class)),
                         this::openSystemFiles,
                         () -> startActivity(new Intent(this, AccountManagerActivity.class)),
