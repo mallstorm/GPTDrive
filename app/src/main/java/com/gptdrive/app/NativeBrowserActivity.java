@@ -1,83 +1,88 @@
 package com.gptdrive.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
-import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
-/** Native folder browser with metadata-only infinite paging and on-demand previews. */
+/** Native semantic collection browser with stable infinite paging and batch selection. */
 public final class NativeBrowserActivity extends Activity {
     public static final String EXTRA_CATEGORY = "category";
     public static final String EXTRA_ACCOUNT_ID = "account_id";
+    public static final String EXTRA_PROJECT_ROW_ID = "project_row_id";
 
     private static final int GREEN = 0xFF08A66D;
     private static final int GREEN_SOFT = 0xFFE5F8F1;
     private static final int TEXT = 0xFF101828;
     private static final int MUTED = 0xFF667085;
     private static final int BG = 0xFFF7F9FA;
-    private static final int IMAGE_PAGE = 24;
-    private static final int LIST_PAGE = 40;
+    private static final int PAGE = 24;
     private static final int SYNC_REQUEST = 3901;
 
     private String category;
     private long accountId;
+    private long projectRowId;
     private DriveDb db;
+    private DriveCollections collections;
     private LinearLayout content;
+    private TextView title;
     private TextView summary;
     private EditText search;
     private ScrollView scroll;
-    private List<DriveItem> all = new ArrayList<>();
+    private LinearLayout actionBar;
+    private TextView selectionCount;
+    private final ArrayList<DriveItem> loaded = new ArrayList<>();
+    private final Set<Long> selected = new HashSet<>();
+    private int offset;
+    private long total;
+    private boolean loading;
+    private boolean exhausted;
     private boolean initialLoaded;
-
-    private GridLayout imageGrid;
-    private List<DriveItem> filteredImages = new ArrayList<>();
-    private int imageShown;
-
-    private List<DriveItem> filteredList = new ArrayList<>();
-    private int listShown;
-    private TextView loadingFooter;
-    private boolean appending;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         db = new DriveDb(this);
-        category = getIntent().getStringExtra(EXTRA_CATEGORY);
-        if (category == null) category = "Library";
+        collections = new DriveCollections(db);
+        category = normalizeCollection(getIntent().getStringExtra(EXTRA_CATEGORY));
         accountId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, db.activeAccountId());
+        projectRowId = getIntent().getLongExtra(EXTRA_PROJECT_ROW_ID, -1);
         buildUi();
     }
 
     @Override protected void onResume() {
         super.onResume();
-        // Returning from the viewer must not rebuild already visible cards or discard previews.
         if (!initialLoaded) {
             initialLoaded = true;
-            reload();
+            resetAndLoad();
         }
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == SYNC_REQUEST) reload();
+        if (requestCode == SYNC_REQUEST) resetAndLoad();
     }
 
     private void buildUi() {
@@ -90,9 +95,11 @@ public final class NativeBrowserActivity extends Activity {
         bar.setPadding(dp(8), 0, dp(10), 0);
         TextView back = text("‹", 28, false);
         back.setGravity(Gravity.CENTER);
-        back.setOnClickListener(v -> finish());
+        back.setOnClickListener(v -> {
+            if (!selected.isEmpty()) clearSelection(); else finish();
+        });
         bar.addView(back, new LinearLayout.LayoutParams(dp(40), dp(52)));
-        TextView title = text(titleFor(category), 20, true);
+        title = text(titleFor(), 20, true);
         title.setSingleLine(true);
         bar.addView(title, new LinearLayout.LayoutParams(0, dp(52), 1));
         TextView sync = text("Синхр.", 11, true);
@@ -107,8 +114,12 @@ public final class NativeBrowserActivity extends Activity {
         LinearLayout meta = new LinearLayout(this);
         meta.setGravity(Gravity.CENTER_VERTICAL);
         meta.setPadding(dp(14), 0, dp(14), dp(6));
+        AccountBadgeView badge = new AccountBadgeView(this);
+        badge.bind(a);
+        meta.addView(badge, new LinearLayout.LayoutParams(dp(24), dp(24)));
         TextView account = text(a == null ? "" : a.displayName(), 11, true);
         account.setTextColor(MUTED);
+        account.setPadding(dp(7), 0, 0, 0);
         meta.addView(account, new LinearLayout.LayoutParams(0, dp(28), 1));
         summary = text("0 объектов", 11, false);
         summary.setTextColor(MUTED);
@@ -117,7 +128,7 @@ public final class NativeBrowserActivity extends Activity {
 
         search = new EditText(this);
         search.setSingleLine(true);
-        search.setHint("Поиск в " + titleFor(category));
+        search.setHint("Поиск в " + titleFor());
         search.setTextSize(12);
         search.setTextColor(TEXT);
         search.setHintTextColor(0xFF98A2B3);
@@ -128,231 +139,327 @@ public final class NativeBrowserActivity extends Activity {
         root.addView(search, sp);
         search.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-            public void onTextChanged(CharSequence s, int st, int b, int c) { render(); }
+            public void onTextChanged(CharSequence s, int st, int b, int c) { renderFromLoaded(); }
             public void afterTextChanged(Editable e) {}
         });
 
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setClipToPadding(false);
-        scroll.setOnScrollChangeListener((v, sx, sy, oldx, oldy) -> {
-            if (sy <= oldy || appending) return;
+        scroll.setOnScrollChangeListener((v, sx, sy, osx, osy) -> {
             View child = scroll.getChildAt(0);
-            if (child == null) return;
-            int remaining = child.getHeight() - (scroll.getHeight() + sy);
-            if (remaining <= dp(420)) appendNextPage();
+            if (child == null || exhausted || loading) return;
+            int remain = child.getHeight() - (scroll.getHeight() + sy);
+            if (remain < dp(520)) loadNextPage(false);
         });
-
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(14), 0, dp(14), dp(22));
+        content.setPadding(dp(14), 0, dp(14), dp(26));
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        actionBar = buildActionBar();
+        actionBar.setVisibility(View.GONE);
+        root.addView(actionBar, new LinearLayout.LayoutParams(-1, dp(62)));
         setContentView(root);
     }
 
-    private void reload() {
-        all = db.list(accountId, category, 5000);
-        long files = 0;
-        for (DriveItem x : all) if (!DriveActions.isLink(x)) files++;
-        summary.setText(all.size() + " объектов" + (files != all.size() ? " • " + files + " файлов" : ""));
-        render();
+    private LinearLayout buildActionBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(10), dp(6), dp(10), dp(6));
+        bar.setBackground(round(Color.WHITE, 16, 0xFFE1E5E8, 1));
+        selectionCount = text("0 выбрано", 12, true);
+        bar.addView(selectionCount, new LinearLayout.LayoutParams(0, dp(48), 1));
+        TextView download = action("↓  Скачать");
+        download.setOnClickListener(v -> batchDownload());
+        bar.addView(download, new LinearLayout.LayoutParams(dp(104), dp(44)));
+        TextView delete = action("Удалить");
+        delete.setTextColor(0xFFD92D20);
+        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(dp(86), dp(44));
+        dpv.setMargins(dp(6), 0, 0, 0);
+        bar.addView(delete, dpv);
+        delete.setOnClickListener(v -> deleteSelectedSafely());
+        TextView close = action("×");
+        close.setTextSize(22);
+        close.setOnClickListener(v -> clearSelection());
+        bar.addView(close, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        return bar;
     }
 
-    private void render() {
-        if (content == null) return;
+    private TextView action(String label) {
+        TextView t = text(label, 11, true);
+        t.setGravity(Gravity.CENTER);
+        t.setBackground(round(0xFFF4F6F7, 10, 0xFFE1E5E8, 1));
+        return t;
+    }
+
+    private void resetAndLoad() {
+        loaded.clear();
+        selected.clear();
+        offset = 0;
+        exhausted = false;
+        loading = false;
+        total = totalCount();
+        updateSummary();
         content.removeAllViews();
-        appending = false;
-        String q = search == null ? "" : search.getText().toString().trim().toLowerCase(Locale.ROOT);
-        ArrayList<DriveItem> shown = new ArrayList<>();
-        for (DriveItem x : all) {
-            String name = x.name == null ? "" : x.name.toLowerCase(Locale.ROOT);
-            String type = DriveActions.shortType(x).toLowerCase(Locale.ROOT);
-            if (q.isEmpty() || name.contains(q) || type.contains(q)) shown.add(x);
-        }
-        if (shown.isEmpty()) { empty(); return; }
-        if ("Images".equals(category)) renderImages(shown); else renderList(shown);
+        actionBar.setVisibility(View.GONE);
+        title.setText(titleFor());
+        loadNextPage(true);
     }
 
-    private void renderImages(List<DriveItem> items) {
-        filteredImages = new ArrayList<>();
-        for (DriveItem x : items) if (DriveActions.isImage(x)) filteredImages.add(x);
-        if (filteredImages.isEmpty()) { empty(); return; }
-
-        imageShown = 0;
-        imageGrid = new GridLayout(this);
-        imageGrid.setColumnCount(2);
-        content.addView(imageGrid);
-        addLoadingFooter();
-        appendImagePage();
-    }
-
-    private void appendImagePage() {
-        if (imageGrid == null || filteredImages == null || imageShown >= filteredImages.size()) {
-            updateLoadingFooter();
+    private void loadNextPage(boolean initial) {
+        if (loading || exhausted) return;
+        loading = true;
+        List<DriveItem> page = fetchPage(offset, PAGE);
+        if (page.isEmpty()) {
+            exhausted = true;
+            loading = false;
+            if (loaded.isEmpty()) empty();
             return;
         }
-        appending = true;
-        int end = Math.min(filteredImages.size(), imageShown + IMAGE_PAGE);
-        int width = (getResources().getDisplayMetrics().widthPixels - dp(40)) / 2;
-        for (int i = imageShown; i < end; i++) addImageCell(filteredImages.get(i), width);
-        imageShown = end;
-        appending = false;
-        updateLoadingFooter();
+        int oldSize = loaded.size();
+        loaded.addAll(page);
+        offset += page.size();
+        if (page.size() < PAGE || loaded.size() >= total) exhausted = true;
+        loading = false;
+        updateSummary();
+
+        if (searchText().isEmpty() && !initial) {
+            appendRendered(page);
+        } else {
+            renderFromLoaded();
+        }
+        // Short first page on a tall screen: prefetch one more page so scrolling feels continuous.
+        if (!exhausted && loaded.size() == oldSize + page.size() && loaded.size() < PAGE * 2 && scroll.getHeight() > 0)
+            scroll.post(() -> {
+                View child = scroll.getChildAt(0);
+                if (child != null && child.getHeight() <= scroll.getHeight() + dp(300)) loadNextPage(false);
+            });
     }
 
-    private void addImageCell(DriveItem x, int width) {
+    private List<DriveItem> fetchPage(int start, int limit) {
+        if (projectRowId > 0) return collections.projectFiles(accountId, projectRowId, limit, start);
+        if (DriveCollections.FILES.equals(category) || DriveCollections.IMAGES.equals(category) ||
+                DriveCollections.GENERATED.equals(category) || DriveCollections.ARCHIVED.equals(category))
+            return collections.list(accountId, category, limit, start);
+        return db.list(accountId, category, Math.min(5000, start + limit)).subList(Math.min(start, db.list(accountId, category, Math.min(5000, start + limit)).size()), db.list(accountId, category, Math.min(5000, start + limit)).size());
+    }
+
+    private long totalCount() {
+        if (projectRowId > 0) return collections.projectFileCount(accountId, projectRowId);
+        if (DriveCollections.FILES.equals(category) || DriveCollections.IMAGES.equals(category) ||
+                DriveCollections.GENERATED.equals(category) || DriveCollections.ARCHIVED.equals(category))
+            return collections.count(accountId, category);
+        return db.count(accountId, category);
+    }
+
+    private void renderFromLoaded() {
+        if (content == null) return;
+        content.removeAllViews();
+        ArrayList<DriveItem> shown = filtered(loaded);
+        if (shown.isEmpty()) {
+            if (loaded.isEmpty() || !searchText().isEmpty()) empty();
+            return;
+        }
+        appendRendered(shown);
+    }
+
+    private void appendRendered(List<DriveItem> items) {
+        if (isImageOnlyCollection()) appendImages(items); else appendList(items);
+    }
+
+    private void appendImages(List<DriveItem> items) {
+        GridLayout grid;
+        if (content.getChildCount() > 0 && content.getChildAt(content.getChildCount() - 1) instanceof GridLayout) {
+            grid = (GridLayout) content.getChildAt(content.getChildCount() - 1);
+        } else {
+            grid = new GridLayout(this);
+            grid.setColumnCount(2);
+            content.addView(grid, new LinearLayout.LayoutParams(-1, -2));
+        }
+        int width = (getResources().getDisplayMetrics().widthPixels - dp(40)) / 2;
+        for (DriveItem x : items) if (DriveActions.isImage(x)) addImageCell(grid, x, width);
+    }
+
+    private void addImageCell(GridLayout grid, DriveItem x, int width) {
         LinearLayout cell = new LinearLayout(this);
         cell.setOrientation(LinearLayout.VERTICAL);
         cell.setPadding(dp(5), dp(5), dp(5), dp(8));
-        cell.setBackground(round(Color.WHITE, 15, 0xFFE4E8EB, 1));
+        applySelectionBackground(cell, x);
         cell.setClickable(true);
-        cell.setOnClickListener(v -> DriveActions.open(this, x));
-        cell.setOnLongClickListener(v -> { menu(v, x); return true; });
+        cell.setOnClickListener(v -> onItemClick(x));
+        cell.setOnLongClickListener(v -> { toggleSelection(x); return true; });
 
-        FrameLayout picture = new FrameLayout(this);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         image.setBackgroundColor(0xFFE9ECEF);
-        picture.addView(image, new FrameLayout.LayoutParams(-1, -1));
         ImageLoader.load(image, accountId, x.url);
-        cell.addView(picture, new LinearLayout.LayoutParams(-1, dp(132)));
+        cell.addView(image, new LinearLayout.LayoutParams(-1, dp(138)));
 
-        LinearLayout nameRow = new LinearLayout(this);
-        nameRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView name = text(x.name, 11, true);
         name.setMaxLines(2);
-        name.setPadding(dp(4), dp(5), dp(2), 0);
-        nameRow.addView(name, new LinearLayout.LayoutParams(0, dp(38), 1));
-        TextView more = text("⋮", 18, false);
-        more.setGravity(Gravity.CENTER);
-        more.setOnClickListener(v -> menu(v, x));
-        nameRow.addView(more, new LinearLayout.LayoutParams(dp(26), dp(38)));
-        cell.addView(nameRow);
+        name.setPadding(dp(4), dp(5), dp(4), 0);
+        cell.addView(name);
 
         GridLayout.LayoutParams gp = new GridLayout.LayoutParams();
         gp.width = width;
-        gp.height = dp(180);
+        gp.height = dp(184);
         gp.setMargins(dp(3), dp(3), dp(3), dp(3));
-        imageGrid.addView(cell, gp);
+        grid.addView(cell, gp);
     }
 
-    private void renderList(List<DriveItem> items) {
-        filteredList = new ArrayList<>(items);
-        listShown = 0;
-        addLoadingFooter();
-        appendListPage();
-    }
-
-    private void appendListPage() {
-        if (filteredList == null || listShown >= filteredList.size()) {
-            updateLoadingFooter();
-            return;
-        }
-        appending = true;
-        int end = Math.min(filteredList.size(), listShown + LIST_PAGE);
+    private void appendList(List<DriveItem> items) {
         DateFormat df = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT);
-        // Keep the loading row visually last while appending rows above it.
-        if (loadingFooter != null) content.removeView(loadingFooter);
-        for (int i = listShown; i < end; i++) addFileRow(filteredList.get(i), df);
-        listShown = end;
-        if (loadingFooter != null) content.addView(loadingFooter, loadingParams());
-        appending = false;
-        updateLoadingFooter();
-    }
+        for (DriveItem x : items) {
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(9), dp(7), dp(6), dp(7));
+            applySelectionBackground(row, x);
 
-    private void addFileRow(DriveItem x, DateFormat df) {
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(9), dp(7), dp(6), dp(7));
-        row.setBackground(round(Color.WHITE, 15, 0xFFE5E8EB, 1));
-
-        FrameLayout preview = new FrameLayout(this);
-        preview.setBackground(round(DriveActions.isImage(x) ? 0xFFEAF4FE : 0xFFF0F2F4, 10, 0, 0));
-        if (DriveActions.isImage(x)) {
-            ImageView thumb = new ImageView(this);
-            thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            preview.addView(thumb, new FrameLayout.LayoutParams(-1, -1));
-            ImageLoader.load(thumb, accountId, x.url);
-        } else {
             ImageView icon = new ImageView(this);
-            icon.setImageResource(R.drawable.ic_folder_24);
-            icon.setColorFilter(0xFF667085);
-            icon.setPadding(dp(11), dp(11), dp(11), dp(11));
-            preview.addView(icon, new FrameLayout.LayoutParams(-1, -1));
+            if (DriveActions.isImage(x)) {
+                icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                icon.setBackgroundColor(0xFFE9ECEF);
+                ImageLoader.load(icon, accountId, x.url);
+            } else {
+                icon.setImageResource(R.drawable.ic_folder_24);
+                icon.setColorFilter(0xFF667085);
+                icon.setPadding(dp(9), dp(9), dp(9), dp(9));
+                icon.setBackground(round(0xFFF0F2F4, 10, 0, 0));
+            }
+            row.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+            LinearLayout info = new LinearLayout(this);
+            info.setOrientation(LinearLayout.VERTICAL);
+            info.setGravity(Gravity.CENTER_VERTICAL);
+            info.setPadding(dp(9), 0, 0, 0);
+            TextView n = text(x.name, 13, true);
+            n.setMaxLines(1);
+            String meta = DriveActions.shortType(x);
+            if (x.sizeBytes > 0) meta += " • " + MainActivity.formatBytes(x.sizeBytes);
+            if (x.updated > 0) meta += " • " + df.format(x.updated);
+            TextView m = text(meta, 10, false);
+            m.setTextColor(MUTED);
+            info.addView(n);
+            info.addView(m);
+            row.addView(info, new LinearLayout.LayoutParams(0, dp(50), 1));
+
+            TextView more = text("⋮", 21, false);
+            more.setGravity(Gravity.CENTER);
+            more.setOnClickListener(v -> menu(v, x));
+            row.addView(more, new LinearLayout.LayoutParams(dp(34), dp(44)));
+            row.setOnClickListener(v -> onItemClick(x));
+            row.setOnLongClickListener(v -> { toggleSelection(x); return true; });
+            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(68));
+            rp.setMargins(0, 0, 0, dp(5));
+            content.addView(row, rp);
         }
-        row.addView(preview, new LinearLayout.LayoutParams(dp(52), dp(52)));
-
-        LinearLayout info = new LinearLayout(this);
-        info.setOrientation(LinearLayout.VERTICAL);
-        info.setGravity(Gravity.CENTER_VERTICAL);
-        info.setPadding(dp(9), 0, 0, 0);
-        TextView n = text(x.name, 13, true);
-        n.setMaxLines(1);
-        TextView m = text(DriveActions.shortType(x) + " • " + df.format(x.updated), 10, false);
-        m.setTextColor(MUTED);
-        info.addView(n);
-        info.addView(m);
-        row.addView(info, new LinearLayout.LayoutParams(0, dp(52), 1));
-
-        TextView more = text("⋮", 21, false);
-        more.setGravity(Gravity.CENTER);
-        more.setOnClickListener(v -> menu(v, x));
-        row.addView(more, new LinearLayout.LayoutParams(dp(34), dp(44)));
-        row.setOnClickListener(v -> DriveActions.open(this, x));
-        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(72));
-        rp.setMargins(0, 0, 0, dp(5));
-        content.addView(row, rp);
     }
 
-    private void appendNextPage() {
-        if ("Images".equals(category)) appendImagePage();
-        else appendListPage();
+    private void onItemClick(DriveItem item) {
+        if (!selected.isEmpty()) toggleSelection(item); else DriveActions.open(this, item);
     }
 
-    private void addLoadingFooter() {
-        loadingFooter = text("", 10, false);
-        loadingFooter.setGravity(Gravity.CENTER);
-        loadingFooter.setTextColor(MUTED);
-        content.addView(loadingFooter, loadingParams());
+    private void toggleSelection(DriveItem item) {
+        if (selected.contains(item.id)) selected.remove(item.id); else selected.add(item.id);
+        updateSelectionUi();
+        renderFromLoaded();
     }
 
-    private LinearLayout.LayoutParams loadingParams() {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(52));
-        p.setMargins(dp(3), dp(4), dp(3), dp(4));
-        return p;
+    private void clearSelection() {
+        selected.clear();
+        updateSelectionUi();
+        renderFromLoaded();
     }
 
-    private void updateLoadingFooter() {
-        if (loadingFooter == null) return;
-        int shown = "Images".equals(category) ? imageShown : listShown;
-        int total = "Images".equals(category) ? filteredImages.size() : filteredList.size();
-        if (shown >= total) {
-            loadingFooter.setVisibility(View.GONE);
-        } else {
-            loadingFooter.setVisibility(View.VISIBLE);
-            loadingFooter.setText("◌  Подгружаются ещё объекты…  " + shown + "/" + total);
-        }
+    private void updateSelectionUi() {
+        int n = selected.size();
+        actionBar.setVisibility(n == 0 ? View.GONE : View.VISIBLE);
+        selectionCount.setText(n + " выбрано");
+        title.setText(n == 0 ? titleFor() : "Выбрано: " + n);
+    }
+
+    private void applySelectionBackground(View v, DriveItem x) {
+        boolean active = selected.contains(x.id);
+        v.setBackground(round(active ? 0xFFE1F8EF : Color.WHITE, 15, active ? GREEN : 0xFFE4E8EB, active ? 2 : 1));
+    }
+
+    private void batchDownload() {
+        List<DriveItem> items = selectedItems();
+        if (items.isEmpty()) return;
+        for (DriveItem x : items) DriveActions.download(this, x);
+        Toast.makeText(this, "Скачивание: " + items.size() + " файлов", Toast.LENGTH_SHORT).show();
+        clearSelection();
+    }
+
+    private void deleteSelectedSafely() {
+        List<DriveItem> items = selectedItems();
+        if (items.isEmpty()) return;
+        DriveItem first = items.get(0);
+        new AlertDialog.Builder(this)
+                .setTitle("Удалить в ChatGPT")
+                .setMessage("Удаление должно попасть в реальную корзину ChatGPT, а не исчезнуть только из индекса GPT Drive. Открою Library с первым выбранным файлом для подтверждения. После удаления синхронизация уберёт его из списка.\n\nВыбрано: " + items.size())
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Открыть Library", (d, w) -> openDeleteHandoff(first, items.size()))
+                .show();
+    }
+
+    private void openDeleteHandoff(DriveItem first, int count) {
+        String url = "https://chatgpt.com/library?tab=all&search=" + Uri.encode(first.name == null ? "" : first.name);
+        Intent i = new Intent(this, DeletedLibraryActivity.class);
+        i.putExtra(DeletedLibraryActivity.EXTRA_ACCOUNT_ID, accountId);
+        i.putExtra(DeletedLibraryActivity.EXTRA_URL, url);
+        i.putExtra(DeletedLibraryActivity.EXTRA_TITLE, "Удаление из Library");
+        i.putExtra(DeletedLibraryActivity.EXTRA_NOTE, "Выбрано в GPT Drive: " + count + ". Подтверди удаление в реальном интерфейсе ChatGPT — файл попадёт в «Удалённые», откуда его можно восстановить до окончательного удаления.");
+        startActivity(i);
+    }
+
+    private List<DriveItem> selectedItems() {
+        ArrayList<DriveItem> out = new ArrayList<>();
+        for (DriveItem x : loaded) if (selected.contains(x.id)) out.add(x);
+        return out;
     }
 
     private void menu(View anchor, DriveItem item) {
         PopupMenu m = new PopupMenu(this, anchor);
         m.getMenu().add(0, 1, 0, "Открыть");
-        if (!DriveActions.isLink(item)) m.getMenu().add(0, 2, 1, "Скачать");
-        m.getMenu().add(0, 3, 2, "Источник в ChatGPT");
+        m.getMenu().add(0, 2, 1, "Скачать");
+        m.getMenu().add(0, 3, 2, "Выделить");
+        m.getMenu().add(0, 4, 3, "Источник в ChatGPT");
         m.setOnMenuItemClickListener(mi -> {
             if (mi.getItemId() == 1) DriveActions.open(this, item);
             else if (mi.getItemId() == 2) DriveActions.download(this, item);
+            else if (mi.getItemId() == 3) toggleSelection(item);
             else {
-                Intent i = new Intent(this, BrowserActivity.class);
-                i.putExtra(BrowserActivity.EXTRA_SECTION, category);
-                i.putExtra(BrowserActivity.EXTRA_URL, item.url);
-                i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID, item.accountId);
+                Intent i = new Intent(this, DeletedLibraryActivity.class);
+                i.putExtra(DeletedLibraryActivity.EXTRA_ACCOUNT_ID, accountId);
+                i.putExtra(DeletedLibraryActivity.EXTRA_URL, "https://chatgpt.com/library?tab=all&search=" + Uri.encode(item.name == null ? "" : item.name));
+                i.putExtra(DeletedLibraryActivity.EXTRA_TITLE, "Источник в ChatGPT");
+                i.putExtra(DeletedLibraryActivity.EXTRA_NOTE, "Открыт исходный Library текущего аккаунта.");
                 startActivity(i);
             }
             return true;
         });
         m.show();
+    }
+
+    private ArrayList<DriveItem> filtered(List<DriveItem> items) {
+        String q = searchText();
+        ArrayList<DriveItem> shown = new ArrayList<>();
+        for (DriveItem x : items) {
+            String name = x.name == null ? "" : x.name.toLowerCase(Locale.ROOT);
+            String type = DriveActions.shortType(x).toLowerCase(Locale.ROOT);
+            if (q.isEmpty() || name.contains(q) || type.contains(q)) shown.add(x);
+        }
+        return shown;
+    }
+
+    private String searchText() {
+        return search == null ? "" : search.getText().toString().trim().toLowerCase(Locale.ROOT);
+    }
+
+    private boolean isImageOnlyCollection() {
+        return DriveCollections.IMAGES.equals(category);
     }
 
     private void empty() {
@@ -361,25 +468,21 @@ public final class NativeBrowserActivity extends Activity {
         box.setGravity(Gravity.CENTER);
         box.setPadding(dp(20), dp(54), dp(20), dp(30));
         ImageView icon = new ImageView(this);
-        icon.setImageResource("Images".equals(category) ? R.drawable.ic_image_24 : R.drawable.ic_folder_24);
+        icon.setImageResource(isImageOnlyCollection() ? R.drawable.ic_image_24 : R.drawable.ic_folder_24);
         icon.setColorFilter(0xFF98A2B3);
         box.addView(icon, new LinearLayout.LayoutParams(dp(52), dp(52)));
-        TextView h = text("Пока пусто", 18, true);
+        TextView h = text(searchText().isEmpty() ? "Пока пусто" : "Ничего не найдено", 18, true);
         h.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(-1, -2);
         hp.setMargins(0, dp(12), 0, 0);
         box.addView(h, hp);
-        TextView d = text("Запусти синхронизацию выбранного аккаунта.", 11, false);
-        d.setGravity(Gravity.CENTER);
-        d.setTextColor(MUTED);
-        d.setPadding(0, dp(5), 0, dp(14));
-        box.addView(d);
-        TextView b = text("Синхронизировать", 12, true);
-        b.setGravity(Gravity.CENTER);
-        b.setTextColor(Color.WHITE);
-        b.setBackground(round(GREEN, 13, 0, 0));
-        b.setOnClickListener(v -> sync());
-        box.addView(b, new LinearLayout.LayoutParams(dp(210), dp(44)));
+        if (searchText().isEmpty()) {
+            TextView d = text("Запусти синхронизацию выбранного аккаунта.", 11, false);
+            d.setGravity(Gravity.CENTER);
+            d.setTextColor(MUTED);
+            d.setPadding(0, dp(5), 0, dp(14));
+            box.addView(d);
+        }
         content.addView(box);
     }
 
@@ -390,11 +493,26 @@ public final class NativeBrowserActivity extends Activity {
         startActivityForResult(i, SYNC_REQUEST);
     }
 
-    private String titleFor(String c) {
-        if ("Images".equals(c)) return "Картинки";
-        if ("Projects".equals(c)) return "Проекты";
-        if ("Archived".equals(c)) return "Архив";
-        return "Библиотека";
+    private void updateSummary() {
+        summary.setText(loaded.size() + " / " + total + " объектов");
+    }
+
+    private String titleFor() {
+        if (projectRowId > 0) return collections.projectName(accountId, projectRowId);
+        if (DriveCollections.FILES.equals(category)) return "Файлы";
+        if (DriveCollections.IMAGES.equals(category)) return "Картинки";
+        if (DriveCollections.GENERATED.equals(category)) return "Сгенерированные";
+        if (DriveCollections.ARCHIVED.equals(category)) return "Архив";
+        return category;
+    }
+
+    private String normalizeCollection(String c) {
+        if (c == null || c.trim().isEmpty() || "Library".equals(c)) return DriveCollections.FILES;
+        if ("Images".equals(c)) return DriveCollections.IMAGES;
+        if ("Generated".equals(c)) return DriveCollections.GENERATED;
+        if ("Archived".equals(c)) return DriveCollections.ARCHIVED;
+        if ("Projects".equals(c)) return "Projects";
+        return c;
     }
 
     private TextView text(String v, int sp, boolean bold) {

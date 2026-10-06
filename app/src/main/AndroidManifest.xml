@@ -19,6 +19,8 @@
         <activity android:name=".ChatGptAuthActivity" android:exported="false"/>
         <activity android:name=".ImageViewerActivity" android:exported="false"/>
         <activity android:name=".NativeBrowserActivity" android:exported="false"/>
+        <activity android:name=".ProjectBrowserActivity" android:exported="false"/>
+        <activity android:name=".DeletedLibraryActivity" android:exported="false"/>
         <activity android:name=".BrowserActivity" android:exported="false"/>
         <activity android:name=".MainActivity" android:exported="false"/>
         <activity android:name=".ExplorerActivity" android:exported="false"/>
