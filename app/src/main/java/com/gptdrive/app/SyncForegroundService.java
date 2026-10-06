@@ -38,7 +38,7 @@ public final class SyncForegroundService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         long accountId = intent == null ? -1 : intent.getLongExtra(EXTRA_ACCOUNT_ID, -1);
         if (accountId <= 0) {
-            stopSelf(startId);
+            stopSelf();
             return START_NOT_STICKY;
         }
 
@@ -46,11 +46,11 @@ public final class SyncForegroundService extends Service {
         if (!RUNNING.add(accountId)) return START_REDELIVER_INTENT;
 
         SyncRuntimeState.begin(this, accountId);
-        worker.execute(() -> runSync(accountId, startId));
+        worker.execute(() -> runSync(accountId));
         return START_REDELIVER_INTENT;
     }
 
-    private void runSync(long accountId, int startId) {
+    private void runSync(long accountId) {
         DriveDb db = new DriveDb(this);
         try {
             ChatGptApiClient client = new ChatGptApiClient(this, db, accountId);
@@ -70,7 +70,7 @@ public final class SyncForegroundService extends Service {
         } finally {
             RUNNING.remove(accountId);
             try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (Exception ignored) {}
-            stopSelfResult(startId);
+            stopSelf();
         }
     }
 
