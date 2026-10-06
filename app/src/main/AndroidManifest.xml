@@ -1,8 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
 
     <application
         android:name=".GptDriveApp"
@@ -12,6 +16,7 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
 
+        <activity android:name=".SettingsActivity" android:exported="false"/>
         <activity android:name=".SecurityActivity" android:exported="false"/>
         <activity android:name=".UnlockActivity" android:exported="false" android:excludeFromRecents="true"/>
         <activity android:name=".AccountManagerActivity" android:exported="false"/>
@@ -40,6 +45,14 @@
             android:name=".SyncForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync"/>
+        <service
+            android:name=".LibraryWatcherService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Continuous user-enabled ChatGPT Library watcher for new cloud object notifications"/>
+        </service>
 
         <provider
             android:name=".GptDocumentsProvider"

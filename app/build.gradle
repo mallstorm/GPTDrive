@@ -8,8 +8,8 @@ android {
         applicationId 'com.gptdrive.app'
         minSdk 26
         targetSdk 35
-        versionCode 44
-        versionName '0.11.2'
+        versionCode 45
+        versionName '0.11.3'
     }
 
     buildTypes {
@@ -27,7 +27,6 @@ android {
 }
 
 dependencies {
-    implementation 'androidx.work:work-runtime:2.10.0'
     implementation 'androidx.biometric:biometric:1.1.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
