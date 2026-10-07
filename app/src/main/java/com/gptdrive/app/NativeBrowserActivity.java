@@ -45,6 +45,7 @@ public final class NativeBrowserActivity extends Activity {
     private static final int MUTED = 0xFF667085;
     private static final int BG = 0xFFF7F9FA;
     private static final int PAGE = 24;
+    private static final int INITIAL_IMAGE_WINDOW = 68;
     private static final int SYNC_REQUEST = 3901;
 
     private String category;
@@ -275,7 +276,8 @@ public final class NativeBrowserActivity extends Activity {
     private void loadNextPage(boolean initial) {
         if (loading || exhausted) return;
         loading = true;
-        List<DriveItem> page = fetchPage(offset, PAGE);
+        int requestLimit = initial && isImageOnlyCollection() ? INITIAL_IMAGE_WINDOW : PAGE;
+        List<DriveItem> page = fetchPage(offset, requestLimit);
         if (page.isEmpty()) {
             exhausted = true;
             loading = false;
@@ -285,13 +287,13 @@ public final class NativeBrowserActivity extends Activity {
         int oldSize = loaded.size();
         loaded.addAll(page);
         offset += page.size();
-        if (page.size() < PAGE || loaded.size() >= total) exhausted = true;
+        if (page.size() < requestLimit || loaded.size() >= total) exhausted = true;
         loading = false;
         updateSummary();
 
         if (searchText().isEmpty() && !initial) appendRendered(page);
         else renderFromLoaded();
-        if (!exhausted && loaded.size() == oldSize + page.size() && loaded.size() < PAGE * 2 && scroll.getHeight() > 0)
+        if (!isImageOnlyCollection() && !exhausted && loaded.size() == oldSize + page.size() && loaded.size() < PAGE * 2 && scroll.getHeight() > 0)
             scroll.post(() -> {
                 View child = scroll.getChildAt(0);
                 if (child != null && child.getHeight() <= scroll.getHeight() + dp(300)) loadNextPage(false);
