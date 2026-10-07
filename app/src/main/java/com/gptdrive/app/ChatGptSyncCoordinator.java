@@ -51,7 +51,17 @@ final class ChatGptSyncCoordinator {
     Result sync(ChatGptProvider.Progress progress) throws Exception {
         ChatGptModels.LibrarySnapshot library;
         try {
-            library = provider.loadLibrary(250, progress);
+            library = provider.loadLibrary(250, progress, (pages, pageFiles, objects) -> {
+                SQLiteDatabase pageDb = db.getWritableDatabase();
+                pageDb.beginTransaction();
+                try {
+                    index.mergeFiles(pageDb, pageFiles);
+                    pageDb.setTransactionSuccessful();
+                } finally {
+                    pageDb.endTransaction();
+                }
+                IndexChangeNotifier.notify(context, accountId);
+            });
         } catch (Exception e) {
             db.recordSyncState(accountId, "Library", false, 0, message(e), "mode=metadata-only");
             throw e;
@@ -141,6 +151,7 @@ final class ChatGptSyncCoordinator {
         db.pruneFalsePositives(accountId);
         IndexMaintenance.pruneTransientSignedUrls(db, accountId);
         db.markSynced(accountId);
+        IndexChangeNotifier.notify(context, accountId);
 
         db.recordSyncState(accountId, "Library", true, allFiles.size(), "",
                 "pages=" + library.pages + ";strategy=" + library.strategy +

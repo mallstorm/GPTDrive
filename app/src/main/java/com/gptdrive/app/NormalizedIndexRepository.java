@@ -24,6 +24,30 @@ final class NormalizedIndexRepository {
         this.accountId = accountId;
     }
 
+    /** Adds or refreshes one received page without deleting rows from an unfinished sync. */
+    void mergeFiles(SQLiteDatabase sql, List<ChatGptModels.RemoteFile> page) {
+        if (page == null || page.isEmpty()) return;
+        Map<String, ExistingFile> existing = fileRows(sql);
+        for (ChatGptModels.RemoteFile f : page) {
+            if (f == null || blank(f.identity())) continue;
+            String fileId = f.identity().trim();
+            ExistingFile old = existing.get(fileId);
+            int flags = f.sourceFlags | (old == null ? 0 : old.sourceFlags);
+            ContentValues v = fileValues(f, fileId, flags);
+            if (old != null && old.rowId > 0) {
+                sql.update("files", v, "id=?", new String[]{Long.toString(old.rowId)});
+            } else {
+                v.put("account_id", accountId);
+                v.put("file_id", fileId);
+                long row = sql.insertWithOnConflict("files", null, v, SQLiteDatabase.CONFLICT_IGNORE);
+                if (row > 0) existing.put(fileId, new ExistingFile(row, flags));
+            }
+        }
+        sql.delete("items",
+                "account_id=? AND category IN (?,?) AND lower(url) LIKE 'gptdrive://file/%'",
+                new String[]{Long.toString(accountId), "Library", "Images"});
+    }
+
     void replaceFiles(SQLiteDatabase sql, List<ChatGptModels.RemoteFile> snapshot) {
         replaceFiles(sql, snapshot, 0);
     }

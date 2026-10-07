@@ -181,12 +181,12 @@ public final class SettingsActivity extends Activity {
     }
 
     private void chooseInterval() {
-        String[] names = {"15 секунд", "30 секунд", "60 секунд"};
+        String[] names = {"15 минут", "30 минут", "60 минут"};
         long current = LibraryWatcherService.intervalMs(this);
-        int checked = current == 60_000L ? 2 : current == 30_000L ? 1 : 0;
+        int checked = current == 60 * 60_000L ? 2 : current == 30 * 60_000L ? 1 : 0;
         new AlertDialog.Builder(this).setTitle("Интервал наблюдения")
                 .setSingleChoiceItems(names, checked, (dialog, which) -> {
-                    LibraryWatcherService.setIntervalMs(this, which == 2 ? 60_000L : which == 1 ? 30_000L : 15_000L);
+                    LibraryWatcherService.setIntervalMs(this, which == 2 ? 60 * 60_000L : which == 1 ? 30 * 60_000L : 15 * 60_000L);
                     dialog.dismiss();
                     refresh();
                 })

@@ -256,9 +256,9 @@ final class DriveDb extends SQLiteOpenHelper {
 
     void saveCookies(long id, String chatgpt, String auth, String files) {
         ContentValues v = new ContentValues();
-        v.put("cookie_chatgpt", chatgpt == null ? "" : chatgpt);
-        v.put("cookie_auth", auth == null ? "" : auth);
-        v.put("cookie_files", files == null ? "" : files);
+        v.put("cookie_chatgpt", sealCookie(id, "chatgpt", chatgpt));
+        v.put("cookie_auth", sealCookie(id, "auth", auth));
+        v.put("cookie_files", sealCookie(id, "files", files));
         v.put("updated", System.currentTimeMillis());
         getWritableDatabase().update("accounts", v, "id=?", new String[]{Long.toString(id)});
     }
@@ -471,6 +471,14 @@ final class DriveDb extends SQLiteOpenHelper {
         return out;
     }
 
+    DriveItem byFileId(long accountId, String fileId) {
+        if (fileId == null || fileId.trim().isEmpty()) return null;
+        Cursor c = getReadableDatabase().query("files", null, "account_id=? AND file_id=?",
+                new String[]{Long.toString(accountId), fileId.trim()}, null, null, null, "1");
+        try { return c.moveToFirst() ? fromFile(c, "Library") : null; }
+        finally { c.close(); }
+    }
+
     DriveItem byId(long id) {
         if (id < 0) {
             long row = -id;
@@ -522,7 +530,9 @@ final class DriveDb extends SQLiteOpenHelper {
         return new AccountProfile(
                 c.getLong(c.getColumnIndexOrThrow("id")), c.getString(c.getColumnIndexOrThrow("label")),
                 c.getString(c.getColumnIndexOrThrow("email")), getString(c, "plan"),
-                c.getString(c.getColumnIndexOrThrow("cookie_chatgpt")), c.getString(c.getColumnIndexOrThrow("cookie_auth")), c.getString(c.getColumnIndexOrThrow("cookie_files")),
+                openCookie(c.getLong(c.getColumnIndexOrThrow("id")), "chatgpt", getString(c, "cookie_chatgpt")),
+                openCookie(c.getLong(c.getColumnIndexOrThrow("id")), "auth", getString(c, "cookie_auth")),
+                openCookie(c.getLong(c.getColumnIndexOrThrow("id")), "files", getString(c, "cookie_files")),
                 getLong(c, "storage_used"), getLong(c, "storage_quota"), getLong(c, "last_sync"),
                 c.getLong(c.getColumnIndexOrThrow("updated")), c.getInt(c.getColumnIndexOrThrow("active")) == 1);
     }
@@ -538,7 +548,20 @@ final class DriveDb extends SQLiteOpenHelper {
         long row = c.getLong(c.getColumnIndexOrThrow("id"));
         return new DriveItem(-row, c.getLong(c.getColumnIndexOrThrow("account_id")), category,
                 getString(c,"name"), getString(c,"remote_ref"), getString(c,"mime"), getLong(c,"size_bytes"),
-                getLong(c,"updated_at"));
+                getLong(c,"updated_at"), getString(c,"file_id"), getString(c,"library_file_id"),
+                getLong(c,"created_at"));
+    }
+
+    private static String sealCookie(long accountId, String scope, String value) {
+        String plain = value == null ? "" : value;
+        if (plain.isEmpty()) return "";
+        try { return SecureJsonStore.seal("GPTDrive.Cookie." + accountId + "." + scope + ".v1", plain); }
+        catch (Exception e) { throw new IllegalStateException("Не удалось защитить cookies", e); }
+    }
+
+    private static String openCookie(long accountId, String scope, String value) {
+        try { return SecureJsonStore.open("GPTDrive.Cookie." + accountId + "." + scope + ".v1", value); }
+        catch (Exception e) { return ""; }
     }
 
     private static ArrayList<Long> queryIds(SQLiteDatabase db, String table, String where, String[] args) {

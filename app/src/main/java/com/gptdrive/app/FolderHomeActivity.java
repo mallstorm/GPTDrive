@@ -2,10 +2,13 @@ package com.gptdrive.app;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.database.ContentObserver;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -39,6 +42,8 @@ public final class FolderHomeActivity extends Activity {
     private TextView footerStatus;
     private StorageRingView storageRing;
     private LinearLayout folders;
+    private final Handler refreshHandler = new Handler(Looper.getMainLooper());
+    private ContentObserver indexObserver;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -51,6 +56,27 @@ public final class FolderHomeActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         refresh();
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        if (indexObserver == null) {
+            indexObserver = new ContentObserver(refreshHandler) {
+                @Override public void onChange(boolean selfChange) {
+                    refreshHandler.removeCallbacks(FolderHomeActivity.this::refresh);
+                    refreshHandler.postDelayed(FolderHomeActivity.this::refresh, 250);
+                }
+            };
+            getContentResolver().registerContentObserver(IndexChangeNotifier.uri(db.activeAccountId()), false, indexObserver);
+        }
+    }
+
+    @Override protected void onStop() {
+        if (indexObserver != null) {
+            getContentResolver().unregisterContentObserver(indexObserver);
+            indexObserver = null;
+        }
+        super.onStop();
     }
 
     private void buildUi() {
@@ -328,10 +354,10 @@ public final class FolderHomeActivity extends Activity {
             login(a);
             return;
         }
-        Intent i = new Intent(this, BrowserActivity.class);
-        i.putExtra(BrowserActivity.EXTRA_SECTION, section);
-        i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID, activeId);
-        startActivity(i);
+        SyncForegroundService.start(this, activeId);
+        android.widget.Toast.makeText(this,
+                "Индексация запущена. Папки обновляются по мере загрузки.",
+                android.widget.Toast.LENGTH_LONG).show();
     }
 
     private void login(AccountProfile a) {

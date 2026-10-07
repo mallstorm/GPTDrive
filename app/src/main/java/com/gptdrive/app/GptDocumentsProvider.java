@@ -30,6 +30,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
 
     @Override public Cursor queryRoots(String[] projection) {
         MatrixCursor c = new MatrixCursor(resolveRootProjection(projection));
+        if (accessLocked()) return c;
         AccountProfile a = db.activeAccount();
         if (a == null) return c;
 
@@ -51,12 +52,14 @@ public final class GptDocumentsProvider extends DocumentsProvider {
     }
 
     @Override public Cursor queryDocument(String id, String[] projection) throws FileNotFoundException {
+        requireUnlocked();
         MatrixCursor c = new MatrixCursor(resolveDocProjection(projection));
         include(c, id);
         return c;
     }
 
     @Override public Cursor queryChildDocuments(String parent, String[] projection, String sortOrder) throws FileNotFoundException {
+        requireUnlocked();
         MatrixCursor c = new MatrixCursor(resolveDocProjection(projection));
         if (parent.startsWith("acct:")) {
             long accountId = parseLongAfter(parent, "acct:");
@@ -108,6 +111,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
 
     @Override public Cursor querySearchDocuments(String rootId, String query, String[] projection) {
         MatrixCursor c = new MatrixCursor(resolveDocProjection(projection));
+        if (accessLocked()) return c;
         long accountId = db.activeAccountId();
         String q = query == null ? "" : query.toLowerCase();
         if (accountId <= 0) return c;
@@ -127,6 +131,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
     }
 
     @Override public ParcelFileDescriptor openDocument(String documentId, String mode, CancellationSignal signal) throws FileNotFoundException {
+        requireUnlocked();
         if (documentId.startsWith("chatjson:") || documentId.startsWith("chat:")) {
             ChatRef ref = documentId.startsWith("chatjson:")
                     ? parseChat(documentId, "chatjson:") : parseChat(documentId, "chat:");
@@ -165,6 +170,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
     }
 
     @Override public AssetFileDescriptor openDocumentThumbnail(String documentId, Point sizeHint, CancellationSignal signal) throws FileNotFoundException {
+        requireUnlocked();
         DriveItem item = resolveFile(documentId);
         if (!DriveActions.isImage(item)) throw new FileNotFoundException(documentId);
         try {
@@ -174,6 +180,15 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         } catch (Exception e) {
             throw new FileNotFoundException(e.getMessage());
         }
+    }
+
+    private boolean accessLocked() {
+        return getContext() != null && AppLockManager.enabled(getContext()) &&
+                AppLockManager.needsUnlock(getContext());
+    }
+
+    private void requireUnlocked() throws FileNotFoundException {
+        if (accessLocked()) throw new FileNotFoundException("GPT Drive заблокирован");
     }
 
     private DriveItem resolveFile(String documentId) throws FileNotFoundException {

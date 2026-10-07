@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -16,7 +17,10 @@ import java.util.Set;
 final class LibraryPaginationEngine {
     interface Fetcher { HttpResponse fetch(PageRequest request) throws Exception; }
     interface StatusHandler { void ensure(HttpResponse response) throws Exception; }
-    interface Listener { void onPage(int pages, int objects); }
+    interface Listener {
+        void onPage(int pages, int objects) throws Exception;
+        default void onPageItems(int pages, int objects, List<ChatGptModels.RemoteFile> pageFiles) throws Exception {}
+    }
 
     static final class Result {
         final ArrayList<ChatGptModels.RemoteFile> files;
@@ -77,7 +81,11 @@ final class LibraryPaginationEngine {
 
             mergePage(merged, page);
             lastMeta = page.meta;
-            if (listener != null) listener.onPage(pages, merged.size());
+            if (listener != null) {
+                listener.onPage(pages, merged.size());
+                listener.onPageItems(pages, merged.size(),
+                        page == null || page.files == null ? new ArrayList<>() : new ArrayList<>(page.files));
+            }
 
             if (pages >= maxPages || terminal(page)) break;
 
@@ -107,7 +115,11 @@ final class LibraryPaginationEngine {
                 if (!probeFingerprint.isEmpty() && !seenPageFingerprints.add(probeFingerprint)) {
                     throw new PaginationFailure("Library backend повторяет одну и ту же страницу");
                 }
-                if (listener != null) listener.onPage(pages, merged.size());
+                if (listener != null) {
+                    listener.onPage(pages, merged.size());
+                    listener.onPageItems(pages, merged.size(),
+                            probe.page.files == null ? new ArrayList<>() : new ArrayList<>(probe.page.files));
+                }
                 if (pages >= maxPages || terminal(probe.page)) break;
                 String cursor = safe(probe.page.meta.nextCursor);
                 if (!cursor.isEmpty() && !seenContinuationCursors.add(cursor) && !cursor.equals(next))
