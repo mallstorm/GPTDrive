@@ -82,7 +82,7 @@ final class LibraryMutationClient {
     private void loadTrashCandidate(String first, LinkedHashMap<String, TrashItem> out) throws Exception {
         String endpoint = first;
         String seenCursor = "";
-        for (int page = 0; page < 30; page++) {
+        for (int page = 0; page < 3; page++) {
             HttpResponse r = request("GET", endpoint, null, true);
             if (r.code == 401 || r.code == 403) throw new java.io.IOException("Сессия ChatGPT недоступна (HTTP " + r.code + ")");
             if (r.code == 404 || r.code == 405) return;
