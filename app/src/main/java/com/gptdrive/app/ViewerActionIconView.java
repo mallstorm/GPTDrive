@@ -11,6 +11,7 @@ final class ViewerActionIconView extends View {
     static final int DOWNLOAD = 1;
     static final int SHARE = 2;
     static final int INFO = 3;
+    static final int TRASH = 4;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
@@ -32,7 +33,8 @@ final class ViewerActionIconView extends View {
         float s = Math.min(getWidth(), getHeight()) * .30f;
         if (type == DOWNLOAD) drawDownload(c, cx, cy, s);
         else if (type == SHARE) drawShare(c, cx, cy, s);
-        else drawInfo(c, cx, cy, s);
+        else if (type == INFO) drawInfo(c, cx, cy, s);
+        else drawTrash(c, cx, cy, s);
     }
 
     private void drawDownload(Canvas c, float cx, float cy, float s) {
@@ -57,6 +59,22 @@ final class ViewerActionIconView extends View {
         c.drawCircle(cx, cy - s * .38f, s * .09f, paint);
         paint.setStyle(Paint.Style.STROKE);
         c.drawLine(cx, cy - s * .08f, cx, cy + s * .48f, paint);
+    }
+
+    private void drawTrash(Canvas c, float cx, float cy, float s) {
+        float left = cx - s * .55f;
+        float right = cx + s * .55f;
+        float top = cy - s * .28f;
+        float bottom = cy + s * .72f;
+        c.drawLine(left, top, left + s * .12f, bottom, paint);
+        c.drawLine(right, top, right - s * .12f, bottom, paint);
+        c.drawLine(left + s * .12f, bottom, right - s * .12f, bottom, paint);
+        c.drawLine(cx - s * .72f, cy - s * .52f, cx + s * .72f, cy - s * .52f, paint);
+        c.drawLine(cx - s * .25f, cy - s * .78f, cx + s * .25f, cy - s * .78f, paint);
+        c.drawLine(cx - s * .25f, cy - s * .78f, cx - s * .34f, cy - s * .52f, paint);
+        c.drawLine(cx + s * .25f, cy - s * .78f, cx + s * .34f, cy - s * .52f, paint);
+        c.drawLine(cx - s * .22f, cy - s * .04f, cx - s * .17f, cy + s * .48f, paint);
+        c.drawLine(cx + s * .22f, cy - s * .04f, cx + s * .17f, cy + s * .48f, paint);
     }
 
     private float dp(float n) { return n * getResources().getDisplayMetrics().density; }
