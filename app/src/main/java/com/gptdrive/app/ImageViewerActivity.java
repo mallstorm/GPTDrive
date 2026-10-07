@@ -234,7 +234,6 @@ public final class ImageViewerActivity extends Activity {
         status.setText("Получаю изображение…");
         status.setVisibility(View.VISIBLE);
         rebuildCarousel();
-        ImageLoader.prefetchAround(this, item.accountId, gallery, index, 24);
         ImageLoader.load(this, item.accountId, item.url, bitmap -> runOnUiThread(() -> {
             if (token != loadingToken) return;
             if (bitmap != null) {
