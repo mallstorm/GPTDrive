@@ -12,6 +12,7 @@ final class ViewerActionIconView extends View {
     static final int SHARE = 2;
     static final int INFO = 3;
     static final int TRASH = 4;
+    static final int CLOSE = 5;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
@@ -27,6 +28,11 @@ final class ViewerActionIconView extends View {
         paint.setStrokeJoin(Paint.Join.ROUND);
     }
 
+    void setIconColor(int color) {
+        paint.setColor(color);
+        invalidate();
+    }
+
     @Override protected void onDraw(Canvas c) {
         super.onDraw(c);
         float cx = getWidth() / 2f, cy = getHeight() / 2f;
@@ -34,7 +40,8 @@ final class ViewerActionIconView extends View {
         if (type == DOWNLOAD) drawDownload(c, cx, cy, s);
         else if (type == SHARE) drawShare(c, cx, cy, s);
         else if (type == INFO) drawInfo(c, cx, cy, s);
-        else drawTrash(c, cx, cy, s);
+        else if (type == TRASH) drawTrash(c, cx, cy, s);
+        else drawClose(c, cx, cy, s);
     }
 
     private void drawDownload(Canvas c, float cx, float cy, float s) {
@@ -75,6 +82,11 @@ final class ViewerActionIconView extends View {
         c.drawLine(cx + s * .25f, cy - s * .78f, cx + s * .34f, cy - s * .52f, paint);
         c.drawLine(cx - s * .22f, cy - s * .04f, cx - s * .17f, cy + s * .48f, paint);
         c.drawLine(cx + s * .22f, cy - s * .04f, cx + s * .17f, cy + s * .48f, paint);
+    }
+
+    private void drawClose(Canvas c, float cx, float cy, float s) {
+        c.drawLine(cx - s * .62f, cy - s * .62f, cx + s * .62f, cy + s * .62f, paint);
+        c.drawLine(cx + s * .62f, cy - s * .62f, cx - s * .62f, cy + s * .62f, paint);
     }
 
     private float dp(float n) { return n * getResources().getDisplayMetrics().density; }
