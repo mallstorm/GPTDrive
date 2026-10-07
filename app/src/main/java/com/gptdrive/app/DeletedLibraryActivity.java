@@ -129,8 +129,13 @@ public final class DeletedLibraryActivity extends Activity {
     }
 
     private void refresh() {
+        List<LibraryMutationClient.TrashItem> local = client.loadShadow();
+        all.clear();
+        all.addAll(local);
+        count.setText(all.size() + " объектов");
+        render();
         status.setVisibility(View.VISIBLE);
-        status.setText("Синхронизирую удалённые…");
+        status.setText(local.isEmpty() ? "Проверяю удалённые в ChatGPT…" : "Показаны локальные удаления • сверяю с ChatGPT…");
         worker.execute(() -> {
             try {
                 List<LibraryMutationClient.TrashItem> list = client.loadTrash();
