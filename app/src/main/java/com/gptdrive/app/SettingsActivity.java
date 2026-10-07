@@ -63,10 +63,17 @@ public final class SettingsActivity extends Activity {
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(12), dp(5), dp(12), dp(24));
 
-        body.addView(section("ФОНОВАЯ РАБОТА"));
+        body.addView(section("АККАУНТ"));
+        body.addView(linkCard("Аккаунт", "Подключение, профиль и смена аккаунта", () -> startActivity(new Intent(this, AccountManagerActivity.class))));
+        body.addView(section("СИНХРОНИЗАЦИЯ И ХРАНИЛИЩЕ"));
         body.addView(watcherCard());
+        body.addView(linkCard("Синхронизация библиотеки", "Обновить облачный индекс GPT Drive", () -> openSync("Library")));
+        body.addView(linkCard("Файлы устройства", "Открыть документ из памяти телефона", this::openSystemFiles));
+        body.addView(linkCard("Корзина", "Удалённые файлы и восстановление", this::openDeleted));
         body.addView(section("БЕЗОПАСНОСТЬ"));
         body.addView(securityCard());
+        body.addView(section("СЕТЬ"));
+        body.addView(linkCard("Сеть и DNS", "Подключение, маршрутизация и DNS", () -> startActivity(new Intent(this, DnsSettingsActivity.class))));
 
         TextView note = text("Наблюдение работает отдельно от полной синхронизации: загружаются только свежие метаданные, а содержимое файлов остаётся в облаке до явного открытия.", 10, false);
         note.setTextColor(MUTED);
@@ -103,6 +110,52 @@ public final class SettingsActivity extends Activity {
         interval.setOnClickListener(v -> chooseInterval());
         card.addView(interval);
         return card;
+    }
+
+    private LinearLayout linkCard(String title, String subtitle, Runnable action) {
+        LinearLayout card = card();
+        LinearLayout row = row();
+        row.setClickable(true);
+        row.addView(labels(title, subtitle), new LinearLayout.LayoutParams(0, -2, 1));
+        TextView arrow = text("›", 24, false);
+        arrow.setTextColor(0xFF98A2B3);
+        arrow.setGravity(Gravity.CENTER);
+        row.addView(arrow, new LinearLayout.LayoutParams(dp(32), dp(52)));
+        row.setOnClickListener(v -> action.run());
+        card.addView(row);
+        return card;
+    }
+
+    private void openSync(String section) {
+        DriveDb db = new DriveDb(this);
+        AccountProfile a = db.activeAccount();
+        if (a != null && !a.hasSession()) {
+            Intent login = new Intent(this, ChatGptAuthActivity.class);
+            login.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, a.id);
+            login.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, false);
+            startActivity(login);
+            return;
+        }
+        Intent i = new Intent(this, BrowserActivity.class);
+        i.putExtra(BrowserActivity.EXTRA_SECTION, section);
+        if (a != null) i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID, a.id);
+        startActivity(i);
+    }
+
+    private void openDeleted() {
+        AccountProfile a = new DriveDb(this).activeAccount();
+        Intent i = new Intent(this, DeletedLibraryActivity.class);
+        if (a != null) i.putExtra(DeletedLibraryActivity.EXTRA_ACCOUNT_ID, a.id);
+        startActivity(i);
+    }
+
+    private void openSystemFiles() {
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.setType("*/*");
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            startActivityForResult(i, 100);
+        } catch (Exception ignored) {}
     }
 
     private LinearLayout securityCard() {
