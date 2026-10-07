@@ -19,7 +19,7 @@ final class ImageLoader {
 
     private static final int THUMB_MAX = 512;
     private static final int VIEWER_MAX = 2560;
-    private static final ExecutorService THUMB_EXEC = Executors.newFixedThreadPool(4);
+    private static final ExecutorService THUMB_EXEC = Executors.newFixedThreadPool(2);
     private static final ExecutorService VIEWER_EXEC = Executors.newFixedThreadPool(2);
     private static final Set<String> PREFETCHING = ConcurrentHashMap.newKeySet();
     private static final LruCache<String, Bitmap> CACHE = new LruCache<String, Bitmap>(48 * 1024) {
