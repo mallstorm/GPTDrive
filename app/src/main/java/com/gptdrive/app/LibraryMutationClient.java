@@ -50,8 +50,14 @@ final class LibraryMutationClient {
 
     List<TrashItem> loadTrash() throws Exception {
         LinkedHashMap<String, TrashItem> out = new LinkedHashMap<>();
+        // Local shadow is authoritative for successful mutations made by GPT Drive.
+        // Merge it first so a transient/changed server trash endpoint can never make
+        // an item that we just deleted disappear from the Recently deleted surface.
+        mergeShadow(out);
         String[] candidates = {
                 "/backend-api/files/library/trash?limit=200",
+                "/backend-api/files/library?deleted=true&limit=200",
+                "/backend-api/files/library?recently_deleted=true&limit=200",
                 "/backend-api/files/library/nodes?deleted=true&limit=200&include_saved_entities=true&include_folder_counts=true",
                 "/backend-api/files/library/nodes?recently_deleted=true&limit=200&include_saved_entities=true&include_folder_counts=true",
                 "/backend-api/files/library/nodes?view=deleted&limit=200&include_saved_entities=true&include_folder_counts=true"
@@ -63,7 +69,6 @@ final class LibraryMutationClient {
                 if (!out.isEmpty()) break;
             } catch (Exception e) { last = e; }
         }
-        mergeShadow(out);
         if (out.isEmpty() && last != null && !hasShadow()) throw last;
         return new ArrayList<>(out.values());
     }
@@ -187,8 +192,12 @@ final class LibraryMutationClient {
         if (!(node instanceof JSONObject)) return;
         JSONObject o = (JSONObject) node;
         String lib = ChatGptResponseParser.firstStringDeep(o, "library_file_id", "libraryFileId");
+        if (lib.isEmpty() && trusted)
+            lib = ChatGptResponseParser.firstStringDeep(o, "id", "node_id", "nodeId", "file_id", "fileId");
+        String state = ChatGptResponseParser.firstStringDeep(o, "status", "state", "view").toLowerCase(java.util.Locale.ROOT);
         boolean deleted = trusted || o.optBoolean("deleted", false) || o.optBoolean("is_deleted", false) ||
-                o.has("deleted_at") || o.has("trashed_at") || o.has("soft_deleted_at") || o.has("deletedAt");
+                o.optBoolean("trashed", false) || o.has("deleted_at") || o.has("trashed_at") ||
+                o.has("soft_deleted_at") || o.has("deletedAt") || state.contains("deleted") || state.contains("trash");
         if (deleted && !lib.isEmpty()) {
             ChatGptModels.RemoteFile f = ChatGptResponseParser.mapToRemote(o);
             if (f != null) {
