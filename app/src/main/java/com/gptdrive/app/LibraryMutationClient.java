@@ -185,7 +185,7 @@ final class LibraryMutationClient {
         byte[] body = payload == null ? null : payload.getBytes(StandardCharsets.UTF_8);
         if (body != null) h.put("Content-Type", "application/json");
         return transport.execute(new HttpRequest(method, endpoint.startsWith("http") ? endpoint : BASE + endpoint,
-                h, body, true, retryable, 15000, 30000, 16 * 1024 * 1024));
+                h, body, true, retryable, 8000, 12000, 16 * 1024 * 1024));
     }
 
     private void walkDeleted(Object node, LinkedHashMap<String, TrashItem> out, boolean trusted, int depth) {
