@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -12,7 +11,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -91,9 +89,11 @@ public final class FolderHomeActivity extends Activity {
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(dp(8), 0, dp(8), 0);
 
-        ImageView menu = tintedIcon(R.drawable.ic_menu_24, TEXT, 23, 40);
-        menu.setOnClickListener(this::showMainMenu);
-        bar.addView(menu, new LinearLayout.LayoutParams(dp(40), dp(46)));
+        TextView settings = text("⚙", 25, false);
+        settings.setGravity(Gravity.CENTER);
+        settings.setContentDescription("Настройки");
+        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        bar.addView(settings, new LinearLayout.LayoutParams(dp(40), dp(46)));
 
         ImageView brand = rawIcon(R.drawable.ic_gpt_drive_logo);
         bar.addView(brand, new LinearLayout.LayoutParams(dp(46), dp(44)));
@@ -301,44 +301,6 @@ public final class FolderHomeActivity extends Activity {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(66));
         p.setMargins(0, 0, 0, dp(6));
         folders.addView(row, p);
-    }
-
-    private void showMainMenu(View anchor) {
-        showActionPopup(anchor,
-                new String[]{"Синхронизировать библиотеку", "Безопасность", "Routing & DNS", "Android Files", "Аккаунты", "Удалённые"},
-                new Runnable[]{
-                        () -> openSync("Library"),
-                        () -> startActivity(new Intent(this, SecurityActivity.class)),
-                        () -> startActivity(new Intent(this, DnsSettingsActivity.class)),
-                        this::openSystemFiles,
-                        () -> startActivity(new Intent(this, AccountManagerActivity.class)),
-                        this::openDeleted
-                }, dp(232));
-    }
-
-    private void showActionPopup(View anchor, String[] labels, Runnable[] actions, int width) {
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(5), dp(5), dp(5), dp(5));
-        panel.setBackground(round(Color.WHITE, 14, 0xFFE5E8EB, 1));
-        for (String label : labels) {
-            TextView action = text(label, 11, false);
-            action.setGravity(Gravity.CENTER_VERTICAL);
-            action.setPadding(dp(11), 0, dp(11), 0);
-            panel.addView(action, new LinearLayout.LayoutParams(-1, dp(44)));
-        }
-        PopupWindow popup = new PopupWindow(panel, width, -2, true);
-        popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        popup.setOutsideTouchable(true);
-        popup.setElevation(dp(10));
-        for (int i = 0; i < labels.length; i++) {
-            final int index = i;
-            panel.getChildAt(i).setOnClickListener(v -> {
-                popup.dismiss();
-                actions[index].run();
-            });
-        }
-        popup.showAsDropDown(anchor, anchor.getWidth() - width, -dp(2));
     }
 
     private void openCollection(String collection) {
