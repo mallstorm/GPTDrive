@@ -50,7 +50,7 @@ final class ChatGptSyncCoordinator {
 
     Result sync(ChatGptProvider.Progress progress) throws Exception {
         ChatGptModels.LibrarySnapshot library;
-        final int[] originalPreviewBudget = {48};
+        final int[] originalPreviewBudget = {0};
         try {
             library = provider.loadLibrary(250, progress, (pages, pageFiles, objects) -> {
                 SQLiteDatabase pageDb = db.getWritableDatabase();
