@@ -213,25 +213,24 @@ public final class NativeBrowserActivity extends Activity {
 
     private LinearLayout buildActionBar() {
         LinearLayout bar = new LinearLayout(this);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(12), dp(5), dp(8), dp(5));
+        bar.setGravity(Gravity.CENTER);
+        bar.setPadding(dp(6), dp(5), dp(6), dp(5));
         bar.setBackground(gradientRound(new int[]{0xFFFFFFFF, 0xF5F1FAF7}, 22, 0xDDE1E5E8, 1));
         bar.setElevation(dp(5));
-        selectionCount = text("0 выбрано", 12, true);
+
+        selectionCount = text("0", 13, true);
+        selectionCount.setGravity(Gravity.CENTER);
         bar.addView(selectionCount, new LinearLayout.LayoutParams(0, dp(48), 1));
         bar.addView(divider(), new LinearLayout.LayoutParams(dp(1), dp(30)));
+
         View download = action(ViewerActionIconView.DOWNLOAD, "Скачать", TEXT, false);
         download.setOnClickListener(v -> batchDownload());
-        bar.addView(download, new LinearLayout.LayoutParams(dp(104), dp(46)));
+        bar.addView(download, new LinearLayout.LayoutParams(0, dp(48), 1));
         bar.addView(divider(), new LinearLayout.LayoutParams(dp(1), dp(30)));
+
         View delete = action(ViewerActionIconView.TRASH, "В корзину", 0xFFE02D3C, false);
-        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(dp(108), dp(46));
-        bar.addView(delete, dpv);
         delete.setOnClickListener(v -> deleteSelectedSafely());
-        bar.addView(divider(), new LinearLayout.LayoutParams(dp(1), dp(30)));
-        View close = action(ViewerActionIconView.CLOSE, "", TEXT, true);
-        close.setOnClickListener(v -> clearSelection());
-        bar.addView(close, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        bar.addView(delete, new LinearLayout.LayoutParams(0, dp(48), 1));
         return bar;
     }
 
@@ -441,7 +440,7 @@ public final class NativeBrowserActivity extends Activity {
     private void updateSelectionUi() {
         int n = selected.size();
         actionBar.setVisibility(n == 0 ? View.GONE : View.VISIBLE);
-        selectionCount.setText(n + " выбрано");
+        selectionCount.setText(String.valueOf(n));
         title.setText(n == 0 ? titleFor() : "Выбрано: " + n);
     }
 
