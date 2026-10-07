@@ -48,6 +48,12 @@ final class LibraryMutationClient {
         this.transport = new AndroidHttpTransport(app);
     }
 
+    List<TrashItem> loadShadow() {
+        LinkedHashMap<String, TrashItem> out = new LinkedHashMap<>();
+        mergeShadow(out);
+        return new ArrayList<>(out.values());
+    }
+
     List<TrashItem> loadTrash() throws Exception {
         LinkedHashMap<String, TrashItem> out = new LinkedHashMap<>();
         // Local shadow is authoritative for successful mutations made by GPT Drive.
