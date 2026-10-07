@@ -42,6 +42,14 @@ public class ChatGptResponseParserTest {
         assertTrue(merged.isImage());
     }
 
+    @Test public void extractsDedicatedThumbnailUrl() throws Exception {
+        ChatGptModels.RemoteFile f = ChatGptResponseParser.mapToRemote(new JSONObject(
+                "{\"file_id\":\"file_thumb123\",\"name\":\"photo.png\"," +
+                "\"thumbnail_url\":\"https://cdn.example/thumb.jpg\"}"));
+        assertNotNull(f);
+        assertEquals("https://cdn.example/thumb.jpg", f.thumbnailUrl);
+    }
+
     @Test public void filtersInternalUserStoragePaths() throws Exception {
         ChatGptModels.RemoteFile f = ChatGptResponseParser.mapToRemote(new JSONObject(
                 "{\"file_id\":\"file_internal123\",\"name\":\"user-LcNbBJ8UFHlortegjedzlgMK/4a4975ff7a4048e4b18911589edf213b/item\",\"mime_type\":\"image/png\"}"));

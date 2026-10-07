@@ -29,6 +29,7 @@ final class ChatGptModels {
         String projectId = "";
         String assetPointer = "";
         String rawUrl = "";
+        String thumbnailUrl = "";
         int width;
         int height;
         int sourceFlags;
@@ -124,6 +125,7 @@ final class ChatGptModels {
         cur.projectId = first(cur.projectId, incoming.projectId);
         cur.assetPointer = first(cur.assetPointer, incoming.assetPointer);
         cur.rawUrl = first(cur.rawUrl, incoming.rawUrl);
+        cur.thumbnailUrl = first(cur.thumbnailUrl, incoming.thumbnailUrl);
         if (cur.width <= 0) cur.width = incoming.width;
         if (cur.height <= 0) cur.height = incoming.height;
         cur.sourceFlags |= incoming.sourceFlags;

@@ -35,9 +35,14 @@ final class ThumbnailDiskCache {
     private ThumbnailDiskCache() {}
 
     static Bitmap get(Context context, long accountId, String sourceUrl, int maxDimension) throws Exception {
+        return get(context, accountId, sourceUrl, sourceUrl, maxDimension);
+    }
+
+    static Bitmap get(Context context, long accountId, String sourceUrl,
+                      String identityUrl, int maxDimension) throws Exception {
         Context app = context.getApplicationContext();
         String stableSource = RemoteFileSource.stableUrl(sourceUrl);
-        String identity = stableIdentity(stableSource);
+        String identity = stableIdentity(RemoteFileSource.stableUrl(identityUrl));
         String digest = sha256(accountId + "|" + maxDimension + "|" + identity);
         File dir = indexDir(app);
         File dst = new File(dir, digest + ".jpg");
