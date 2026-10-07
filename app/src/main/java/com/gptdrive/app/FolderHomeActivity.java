@@ -82,7 +82,7 @@ public final class FolderHomeActivity extends Activity {
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
+        root.setBackground(new SoftCloudDrawable());
         root.addView(buildTopBar(), new LinearLayout.LayoutParams(-1, dp(58)));
 
         ScrollView scroll = new ScrollView(this);
@@ -160,7 +160,8 @@ public final class FolderHomeActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(13), dp(8), dp(10), dp(8));
-        card.setBackground(round(Color.WHITE, 18, 0xFFE8EBED, 1));
+        card.setBackground(gradientRound(new int[]{0xFAFFFFFF, 0xF2F1FFF9}, 18, 0xDDE3EAEE, 1));
+        card.setElevation(dp(2));
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, dp(124));
         cp.setMargins(0, dp(1), 0, dp(8));
         card.setLayoutParams(cp);
@@ -231,7 +232,8 @@ public final class FolderHomeActivity extends Activity {
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(dp(14), dp(5), dp(14), dp(5));
-        bar.setBackground(round(Color.WHITE, 16, 0xFFE3E7EA, 1));
+        bar.setBackground(gradientRound(new int[]{0xFAFFFFFF, 0xF2ECFAF5}, 16, 0xDDE3E7EA, 1));
+        bar.setElevation(dp(2));
         ImageView cloud = rawIcon(R.drawable.ic_gpt_drive_logo);
         bar.addView(cloud, new LinearLayout.LayoutParams(dp(34), dp(28)));
         footerStatus = text("В облаке • состояние не определено", 10, true);
@@ -300,8 +302,9 @@ public final class FolderHomeActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(8), dp(4), dp(6), dp(4));
-        row.setBackground(round(Color.WHITE, 13, 0xFFE8EBED, 1));
-        row.addView(rawIcon(iconRes), new LinearLayout.LayoutParams(dp(54), dp(50)));
+        row.setBackground(gradientRound(new int[]{0xFAFFFFFF, 0xF3F8FBFF}, 16, 0xDDE5E9ED, 1));
+        row.setElevation(dp(1));
+        row.addView(new FolderTypeIconView(this, iconRes), new LinearLayout.LayoutParams(dp(54), dp(50)));
 
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
@@ -423,6 +426,13 @@ public final class FolderHomeActivity extends Activity {
     private GradientDrawable round(int color, int radiusDp, int strokeColor, int strokeDp) {
         GradientDrawable g = new GradientDrawable();
         g.setColor(color);
+        g.setCornerRadius(dp(radiusDp));
+        if (strokeDp > 0) g.setStroke(dp(strokeDp), strokeColor);
+        return g;
+    }
+
+    private GradientDrawable gradientRound(int[] colors, int radiusDp, int strokeColor, int strokeDp) {
+        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TL_BR, colors);
         g.setCornerRadius(dp(radiusDp));
         if (strokeDp > 0) g.setStroke(dp(strokeDp), strokeColor);
         return g;
