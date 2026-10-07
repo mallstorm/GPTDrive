@@ -3,10 +3,13 @@ package com.gptdrive.app;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.database.ContentObserver;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -34,6 +37,7 @@ public final class NativeBrowserActivity extends Activity {
     public static final String EXTRA_CATEGORY = "category";
     public static final String EXTRA_ACCOUNT_ID = "account_id";
     public static final String EXTRA_PROJECT_ROW_ID = "project_row_id";
+    public static final String EXTRA_OPEN_FILE_ID = "open_file_id";
 
     private static final int GREEN = 0xFF08A66D;
     private static final int GREEN_SOFT = 0xFFE5F8F1;
@@ -58,6 +62,10 @@ public final class NativeBrowserActivity extends Activity {
     private final ArrayList<DriveItem> loaded = new ArrayList<>();
     private final Set<Long> selected = new HashSet<>();
     private final ExecutorService mutationWorker = Executors.newSingleThreadExecutor();
+    private final Handler refreshHandler = new Handler(Looper.getMainLooper());
+    private final Runnable refreshIndex = this::resetAndLoad;
+    private ContentObserver indexObserver;
+    private String openFileId = "";
     private int offset;
     private long total;
     private boolean loading;
@@ -71,15 +79,49 @@ public final class NativeBrowserActivity extends Activity {
         category = normalizeCollection(getIntent().getStringExtra(EXTRA_CATEGORY));
         accountId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, db.activeAccountId());
         projectRowId = getIntent().getLongExtra(EXTRA_PROJECT_ROW_ID, -1);
+        openFileId = getIntent().getStringExtra(EXTRA_OPEN_FILE_ID);
+        if (openFileId == null) openFileId = "";
         buildUi();
     }
 
     @Override protected void onResume() {
         super.onResume();
+        if (!openFileId.trim().isEmpty()) {
+            DriveItem direct = db.byFileId(accountId, openFileId.trim());
+            openFileId = "";
+            if (direct != null) {
+                DriveActions.open(this, direct);
+                return;
+            }
+        }
         if (!initialLoaded) {
             initialLoaded = true;
             resetAndLoad();
         }
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        if (indexObserver == null) {
+            indexObserver = new ContentObserver(refreshHandler) {
+                @Override public void onChange(boolean selfChange) {
+                    if (selected.isEmpty()) {
+                        refreshHandler.removeCallbacks(refreshIndex);
+                        refreshHandler.postDelayed(refreshIndex, 250);
+                    }
+                }
+            };
+            getContentResolver().registerContentObserver(IndexChangeNotifier.uri(accountId), false, indexObserver);
+        }
+    }
+
+    @Override protected void onStop() {
+        if (indexObserver != null) {
+            getContentResolver().unregisterContentObserver(indexObserver);
+            indexObserver = null;
+        }
+        refreshHandler.removeCallbacks(refreshIndex);
+        super.onStop();
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -175,7 +217,7 @@ public final class NativeBrowserActivity extends Activity {
         TextView download = action("↓  Скачать");
         download.setOnClickListener(v -> batchDownload());
         bar.addView(download, new LinearLayout.LayoutParams(dp(104), dp(44)));
-        TextView delete = action("Удалить");
+        TextView delete = action("В корзину");
         delete.setTextColor(0xFFD92D20);
         LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(dp(86), dp(44));
         dpv.setMargins(dp(6), 0, 0, 0);
@@ -398,7 +440,7 @@ public final class NativeBrowserActivity extends Activity {
                 .setTitle("Переместить в «Удалённые»?")
                 .setMessage("Выбрано: " + items.size() + ". Материалы будут перемещены в нативный раздел «Удалённые» и останутся доступными для восстановления до окончательной очистки.")
                 .setNegativeButton("Отмена", null)
-                .setPositiveButton("Удалить", (d, w) -> moveSelectedToTrash(items))
+                .setPositiveButton("В корзину", (d, w) -> moveSelectedToTrash(items))
                 .show();
     }
 
@@ -440,7 +482,7 @@ public final class NativeBrowserActivity extends Activity {
         m.getMenu().add(0, 1, 0, "Открыть");
         m.getMenu().add(0, 2, 1, "Скачать");
         m.getMenu().add(0, 3, 2, "Выделить");
-        m.getMenu().add(0, 4, 3, "Удалить");
+        m.getMenu().add(0, 4, 3, "В корзину");
         m.setOnMenuItemClickListener(mi -> {
             if (mi.getItemId() == 1) DriveActions.open(this, item);
             else if (mi.getItemId() == 2) DriveActions.download(this, item);
@@ -452,7 +494,7 @@ public final class NativeBrowserActivity extends Activity {
                         .setTitle("Переместить в «Удалённые»?")
                         .setMessage(item.name)
                         .setNegativeButton("Отмена", null)
-                        .setPositiveButton("Удалить", (d, w) -> moveSelectedToTrash(one))
+                        .setPositiveButton("В корзину", (d, w) -> moveSelectedToTrash(one))
                         .show();
             }
             return true;
@@ -502,10 +544,16 @@ public final class NativeBrowserActivity extends Activity {
     }
 
     private void sync() {
-        Intent i = new Intent(this, BrowserActivity.class);
-        i.putExtra(BrowserActivity.EXTRA_SECTION, category);
-        i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID, accountId);
-        startActivityForResult(i, SYNC_REQUEST);
+        AccountProfile account = db.accountById(accountId);
+        if (account == null || !account.hasSession()) {
+            Intent login = new Intent(this, ChatGptAuthActivity.class);
+            login.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, accountId);
+            login.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, false);
+            startActivity(login);
+            return;
+        }
+        SyncForegroundService.start(this, accountId);
+        Toast.makeText(this, "Индексация запущена. Файлы появятся по мере загрузки.", Toast.LENGTH_LONG).show();
     }
 
     private void updateSummary() { summary.setText(loaded.size() + " / " + total + " объектов"); }
@@ -548,6 +596,7 @@ public final class NativeBrowserActivity extends Activity {
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
 
     @Override protected void onDestroy() {
+        refreshHandler.removeCallbacks(refreshIndex);
         mutationWorker.shutdownNow();
         super.onDestroy();
     }

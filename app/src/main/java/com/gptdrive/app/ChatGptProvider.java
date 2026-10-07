@@ -16,6 +16,7 @@ import java.util.Map;
 /** ChatGPT backend provider. No SQLite and no DNS policy lives here. */
 final class ChatGptProvider {
     interface Progress { void onProgress(String phase, int part, int total, int objects); }
+    interface PageConsumer { void onPage(int pages, List<ChatGptModels.RemoteFile> files, int objects) throws Exception; }
 
     static class ProviderException extends Exception { ProviderException(String m) { super(m); } }
     static final class AuthException extends ProviderException { AuthException(String m) { super(m); } }
@@ -41,13 +42,25 @@ final class ChatGptProvider {
     int lastLibraryStrategy() { return lastLibraryStrategy; }
 
     ChatGptModels.LibrarySnapshot loadLibrary(int maxPages, Progress progress) throws Exception {
+        return loadLibrary(maxPages, progress, null);
+    }
+
+    ChatGptModels.LibrarySnapshot loadLibrary(int maxPages, Progress progress, PageConsumer consumer) throws Exception {
         try {
             LibraryPaginationEngine.Result result = LibraryPaginationEngine.load(
                     request -> validateLibraryResponse(backend("POST", request.endpoint, request.payload, true, true)),
                     ChatGptProvider::ensureLibraryStatus,
                     maxPages,
-                    (pages, objects) -> {
-                        if (progress != null) progress.onProgress("Файлы", 1, 4, objects);
+                    new LibraryPaginationEngine.Listener() {
+                        @Override public void onPage(int pages, int objects) {
+                            if (progress != null) progress.onProgress("Файлы", 1, 4, objects);
+                        }
+
+                        @Override public void onPageItems(int pages, int objects,
+                                                          List<ChatGptModels.RemoteFile> pageFiles) throws Exception {
+                            if (consumer != null && pageFiles != null && !pageFiles.isEmpty())
+                                consumer.onPage(pages, pageFiles, objects);
+                        }
                     });
             lastLibraryStrategy = result.strategy;
             return new ChatGptModels.LibrarySnapshot(result.files, result.pages, result.lastMeta, result.strategy);
