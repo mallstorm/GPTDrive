@@ -1,6 +1,7 @@
 package com.gptdrive.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Intent;
 import android.content.res.Configuration;
@@ -11,8 +12,6 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -30,6 +29,8 @@ import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Immersive image viewer with persistent thumbnail carousel and collapsible action sheet. */
 public final class ImageViewerActivity extends Activity {
@@ -47,9 +48,8 @@ public final class ImageViewerActivity extends Activity {
     private static final int PANEL_BG = 0xF21A1D21;
     private static final int CAROUSEL_RADIUS = 36;
 
-    private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<DriveItem> gallery = new ArrayList<>();
-    private final Runnable autoCollapse = () -> setPanelExpanded(false, true);
+    private final ExecutorService mutationWorker = Executors.newSingleThreadExecutor();
     private DriveDb db;
     private DriveItem item;
     private int index;
@@ -79,7 +79,7 @@ public final class ImageViewerActivity extends Activity {
         buildGallery(item);
         buildUi();
         showIndex(index);
-        applyOrientationState(false);
+        bottomPanel.post(() -> applyOrientationState(false));
     }
 
     private boolean resolveInitialItem() {
@@ -154,24 +154,31 @@ public final class ImageViewerActivity extends Activity {
 
         bottomPanel = new LinearLayout(this);
         bottomPanel.setOrientation(LinearLayout.VERTICAL);
-        bottomPanel.setPadding(dp(10), 0, dp(10), dp(10));
+        bottomPanel.setPadding(dp(12), 0, dp(12), dp(8));
         bottomPanel.setBackground(round(PANEL_BG, 24, 0x33FFFFFF, 1));
 
         LinearLayout handleBox = new LinearLayout(this);
         handleBox.setGravity(Gravity.CENTER);
         View handle = new View(this);
-        handle.setBackground(round(0xFF9AA1AA, 3, 0, 0));
-        handleBox.addView(handle, new LinearLayout.LayoutParams(dp(46), dp(4)));
+        handle.setBackground(round(0xFFF2F4F7, 3, 0, 0));
+        handleBox.addView(handle, new LinearLayout.LayoutParams(dp(48), dp(5)));
         handleTouch = handleBox;
         installPanelDrag(handleBox);
-        bottomPanel.addView(handleBox, new LinearLayout.LayoutParams(-1, dp(26)));
+        bottomPanel.addView(handleBox, new LinearLayout.LayoutParams(-1, dp(24)));
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER);
-        actions.addView(action(ViewerActionIconView.DOWNLOAD, "Скачать", v -> DriveActions.download(this, item)), new LinearLayout.LayoutParams(0, dp(70), 1));
-        actions.addView(action(ViewerActionIconView.SHARE, "Поделиться", v -> share()), new LinearLayout.LayoutParams(0, dp(70), 1));
-        actions.addView(action(ViewerActionIconView.INFO, "Инфо", v -> showInfoSheet()), new LinearLayout.LayoutParams(0, dp(70), 1));
-        bottomPanel.addView(actions, new LinearLayout.LayoutParams(-1, dp(72)));
+        actions.addView(action(ViewerActionIconView.DOWNLOAD, "Скачать", v -> DriveActions.download(this, item)), new LinearLayout.LayoutParams(0, dp(78), 1));
+        actions.addView(action(ViewerActionIconView.SHARE, "Поделиться", v -> share()), new LinearLayout.LayoutParams(0, dp(78), 1));
+        actions.addView(action(ViewerActionIconView.INFO, "Инфо", v -> showInfoSheet()), new LinearLayout.LayoutParams(0, dp(78), 1));
+        actions.addView(action(ViewerActionIconView.TRASH, "В корзину", v -> confirmMoveToTrash()), new LinearLayout.LayoutParams(0, dp(78), 1));
+        bottomPanel.addView(actions, new LinearLayout.LayoutParams(-1, dp(78)));
+
+        View divider = new View(this);
+        divider.setBackgroundColor(0x2EFFFFFF);
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(-1, dp(1));
+        dividerParams.setMargins(dp(2), 0, dp(2), dp(4));
+        bottomPanel.addView(divider, dividerParams);
 
         thumbs = new HorizontalScrollView(this);
         thumbs.setHorizontalScrollBarEnabled(false);
@@ -182,13 +189,11 @@ public final class ImageViewerActivity extends Activity {
         thumbs.addView(thumbRow, new HorizontalScrollView.LayoutParams(-2, dp(68)));
         bottomPanel.addView(thumbs, new LinearLayout.LayoutParams(-1, dp(70)));
         thumbs.setOnTouchListener((v, e) -> {
-            if (e.getActionMasked() == MotionEvent.ACTION_DOWN) cancelAutoCollapse();
-            if (e.getActionMasked() == MotionEvent.ACTION_UP || e.getActionMasked() == MotionEvent.ACTION_CANCEL) scheduleAutoCollapse();
             return false; // preserve native fling/inertial scrolling
         });
 
-        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, dp(178), Gravity.BOTTOM);
-        bp.setMargins(dp(8), 0, dp(8), dp(6));
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, dp(188), Gravity.BOTTOM);
+        bp.setMargins(dp(4), 0, dp(4), 0);
         root.addView(bottomPanel, bp);
         setContentView(root);
     }
@@ -197,19 +202,18 @@ public final class ImageViewerActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER);
-        card.setPadding(dp(3), dp(4), dp(3), dp(4));
-        card.setBackground(round(0xFF25292E, 14, 0x22FFFFFF, 1));
+        card.setPadding(dp(2), dp(4), dp(2), dp(2));
+        card.setBackgroundColor(Color.TRANSPARENT);
         ViewerActionIconView icon = new ViewerActionIconView(this, iconType);
+        icon.setBackground(round(0xFF25292E, 24, 0x2EFFFFFF, 1));
         TextView caption = text(label, 10, true, WHITE);
         caption.setGravity(Gravity.CENTER);
-        card.addView(icon, new LinearLayout.LayoutParams(-1, dp(34)));
+        card.addView(icon, new LinearLayout.LayoutParams(dp(46), dp(46)));
         card.addView(caption, new LinearLayout.LayoutParams(-1, dp(24)));
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(66), 1);
-        p.setMargins(dp(3), dp(2), dp(3), dp(2));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(76), 1);
+        p.setMargins(dp(2), 0, dp(2), 0);
         card.setOnClickListener(v -> {
-            cancelAutoCollapse();
             listener.onClick(v);
-            scheduleAutoCollapse();
         });
         card.setLayoutParams(p);
         return card;
@@ -244,7 +248,6 @@ public final class ImageViewerActivity extends Activity {
                 status.setOnClickListener(v -> showIndex(index));
             }
         }));
-        scheduleAutoCollapse();
     }
 
     private void rebuildCarousel() {
@@ -278,7 +281,6 @@ public final class ImageViewerActivity extends Activity {
         handle.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    cancelAutoCollapse();
                     dragStartY = e.getRawY();
                     dragStartTranslation = bottomPanel.getTranslationY();
                     draggingPanel = false;
@@ -300,25 +302,16 @@ public final class ImageViewerActivity extends Activity {
     }
 
     private float collapsedTranslation() {
-        boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
-        return Math.max(0, bottomPanel.getHeight() - dp(landscape ? 8 : 24));
+        return Math.max(0, bottomPanel.getHeight() - dp(18));
     }
 
     private void setPanelExpanded(boolean expanded, boolean animate) {
-        boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
-        if (landscape) expanded = false;
         panelExpanded = expanded;
         float y = expanded ? 0 : collapsedTranslation();
+        bottomPanel.animate().cancel();
         if (animate) bottomPanel.animate().translationY(y).setDuration(180).start();
         else bottomPanel.setTranslationY(y);
-        if (expanded) scheduleAutoCollapse(); else cancelAutoCollapse();
     }
-
-    private void scheduleAutoCollapse() {
-        cancelAutoCollapse();
-        if (panelExpanded) handler.postDelayed(autoCollapse, 4200);
-    }
-    private void cancelAutoCollapse() { handler.removeCallbacks(autoCollapse); }
 
     private void toggleTopBar() {
         topVisible = !topVisible;
@@ -343,6 +336,44 @@ public final class ImageViewerActivity extends Activity {
         } catch (Exception e) {
             Toast.makeText(this, "Не удалось открыть меню отправки", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void confirmMoveToTrash() {
+        if (item.id == Long.MIN_VALUE + 31 || db.byId(item.id) == null) {
+            Toast.makeText(this, "Этот материал уже находится вне активной библиотеки", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Переместить в корзину?")
+                .setMessage(item.name)
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("В корзину", (d, w) -> moveCurrentToTrash())
+                .show();
+    }
+
+    private void moveCurrentToTrash() {
+        final DriveItem deleting = item;
+        Toast.makeText(this, "Перемещаю в корзину…", Toast.LENGTH_SHORT).show();
+        mutationWorker.execute(() -> {
+            try {
+                new LibraryMutationClient(this, deleting.accountId).moveToTrash(deleting);
+                runOnUiThread(() -> {
+                    int removed = gallery.indexOf(deleting);
+                    if (removed >= 0) gallery.remove(removed);
+                    Toast.makeText(this, "Перемещено в корзину", Toast.LENGTH_SHORT).show();
+                    if (gallery.isEmpty()) {
+                        finish();
+                    } else {
+                        index = Math.min(Math.max(0, removed), gallery.size() - 1);
+                        showIndex(index);
+                    }
+                });
+            } catch (Exception e) {
+                String message = e.getMessage() == null || e.getMessage().trim().isEmpty()
+                        ? "Не удалось переместить в корзину" : e.getMessage();
+                runOnUiThread(() -> Toast.makeText(this, message, Toast.LENGTH_LONG).show());
+            }
+        });
     }
 
     private void showInfoSheet() {
@@ -466,7 +497,7 @@ public final class ImageViewerActivity extends Activity {
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
 
     @Override protected void onDestroy() {
-        cancelAutoCollapse();
+        mutationWorker.shutdownNow();
         super.onDestroy();
     }
 }
