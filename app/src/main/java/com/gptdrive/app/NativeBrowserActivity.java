@@ -132,7 +132,7 @@ public final class NativeBrowserActivity extends Activity {
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
+        root.setBackground(new SoftCloudDrawable());
 
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
@@ -177,7 +177,8 @@ public final class NativeBrowserActivity extends Activity {
         search.setTextColor(TEXT);
         search.setHintTextColor(0xFF98A2B3);
         search.setPadding(dp(14), 0, dp(14), 0);
-        search.setBackground(round(Color.WHITE, 14, 0xFFE1E5E8, 1));
+        search.setBackground(gradientRound(new int[]{0xFAFFFFFF, 0xF2F5FAFF}, 14, 0xDDE1E5E8, 1));
+        search.setElevation(dp(1));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(44));
         sp.setMargins(dp(14), 0, dp(14), dp(9));
         root.addView(search, sp);
@@ -203,38 +204,58 @@ public final class NativeBrowserActivity extends Activity {
 
         actionBar = buildActionBar();
         actionBar.setVisibility(View.GONE);
-        root.addView(actionBar, new LinearLayout.LayoutParams(-1, dp(62)));
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-1, dp(62));
+        actionParams.setMargins(dp(10), dp(2), dp(10), dp(7));
+        root.addView(actionBar, actionParams);
         setContentView(root);
     }
 
     private LinearLayout buildActionBar() {
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(10), dp(6), dp(10), dp(6));
-        bar.setBackground(round(Color.WHITE, 16, 0xFFE1E5E8, 1));
+        bar.setPadding(dp(12), dp(5), dp(8), dp(5));
+        bar.setBackground(gradientRound(new int[]{0xFFFFFFFF, 0xF5F1FAF7}, 22, 0xDDE1E5E8, 1));
+        bar.setElevation(dp(5));
         selectionCount = text("0 выбрано", 12, true);
         bar.addView(selectionCount, new LinearLayout.LayoutParams(0, dp(48), 1));
-        TextView download = action("↓  Скачать");
+        bar.addView(divider(), new LinearLayout.LayoutParams(dp(1), dp(30)));
+        View download = action(ViewerActionIconView.DOWNLOAD, "Скачать", TEXT, false);
         download.setOnClickListener(v -> batchDownload());
-        bar.addView(download, new LinearLayout.LayoutParams(dp(104), dp(44)));
-        TextView delete = action("В корзину");
-        delete.setTextColor(0xFFD92D20);
-        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(dp(86), dp(44));
-        dpv.setMargins(dp(6), 0, 0, 0);
+        bar.addView(download, new LinearLayout.LayoutParams(dp(104), dp(46)));
+        bar.addView(divider(), new LinearLayout.LayoutParams(dp(1), dp(30)));
+        View delete = action(ViewerActionIconView.TRASH, "В корзину", 0xFFE02D3C, false);
+        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(dp(108), dp(46));
         bar.addView(delete, dpv);
         delete.setOnClickListener(v -> deleteSelectedSafely());
-        TextView close = action("×");
-        close.setTextSize(22);
+        bar.addView(divider(), new LinearLayout.LayoutParams(dp(1), dp(30)));
+        View close = action(ViewerActionIconView.CLOSE, "", TEXT, true);
         close.setOnClickListener(v -> clearSelection());
         bar.addView(close, new LinearLayout.LayoutParams(dp(44), dp(44)));
         return bar;
     }
 
-    private TextView action(String label) {
-        TextView t = text(label, 11, true);
-        t.setGravity(Gravity.CENTER);
-        t.setBackground(round(0xFFF4F6F7, 10, 0xFFE1E5E8, 1));
-        return t;
+    private View action(int iconType, String label, int color, boolean circle) {
+        LinearLayout box = new LinearLayout(this);
+        box.setGravity(Gravity.CENTER);
+        box.setPadding(dp(circle ? 7 : 5), 0, dp(circle ? 7 : 5), 0);
+        box.setBackground(circle ? round(0xFFF1F4F6, 22, 0, 0) : null);
+        ViewerActionIconView icon = new ViewerActionIconView(this, iconType);
+        icon.setIconColor(color);
+        box.addView(icon, new LinearLayout.LayoutParams(dp(25), dp(25)));
+        if (!label.isEmpty()) {
+            TextView t = text(label, 11, true);
+            t.setTextColor(color);
+            t.setGravity(Gravity.CENTER_VERTICAL);
+            t.setPadding(dp(5), 0, 0, 0);
+            box.addView(t, new LinearLayout.LayoutParams(-2, dp(34)));
+        }
+        return box;
+    }
+
+    private View divider() {
+        View v = new View(this);
+        v.setBackgroundColor(0x1F667085);
+        return v;
     }
 
     private void resetAndLoad() {
@@ -367,12 +388,10 @@ public final class NativeBrowserActivity extends Activity {
                 icon.setColorFilter(0xFFB0B8C1);
                 ImageLoader.load(icon, accountId, x.url);
             } else {
-                icon.setImageResource(R.drawable.ic_folder_24);
-                icon.setColorFilter(0xFF667085);
-                icon.setPadding(dp(9), dp(9), dp(9), dp(9));
-                icon.setBackground(round(0xFFF0F2F4, 10, 0, 0));
+                row.removeView(icon);
+                row.addView(new FileTypeIconView(this, x), new LinearLayout.LayoutParams(dp(48), dp(48)));
             }
-            row.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
+            if (DriveActions.isImage(x)) row.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
             LinearLayout info = new LinearLayout(this);
             info.setOrientation(LinearLayout.VERTICAL);
@@ -426,7 +445,10 @@ public final class NativeBrowserActivity extends Activity {
 
     private void applySelectionBackground(View v, DriveItem x) {
         boolean active = selected.contains(x.id);
-        v.setBackground(round(active ? 0xFFE1F8EF : Color.WHITE, 15, active ? GREEN : 0xFFE4E8EB, active ? 2 : 1));
+        v.setBackground(active
+                ? gradientRound(new int[]{0xFFE5FAF2, 0xFFF3FFFB}, 16, GREEN, 2)
+                : gradientRound(new int[]{0xFAFFFFFF, 0xF3F7FAFF}, 16, 0xDDE4E8EB, 1));
+        v.setElevation(dp(active ? 2 : 1));
     }
 
     private void batchDownload() {
@@ -592,6 +614,13 @@ public final class NativeBrowserActivity extends Activity {
     private GradientDrawable round(int color, int radius, int stroke, int strokeDp) {
         GradientDrawable g = new GradientDrawable();
         g.setColor(color);
+        g.setCornerRadius(dp(radius));
+        if (strokeDp > 0) g.setStroke(dp(strokeDp), stroke);
+        return g;
+    }
+
+    private GradientDrawable gradientRound(int[] colors, int radius, int stroke, int strokeDp) {
+        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TL_BR, colors);
         g.setCornerRadius(dp(radius));
         if (strokeDp > 0) g.setStroke(dp(strokeDp), stroke);
         return g;
