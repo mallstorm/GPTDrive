@@ -50,6 +50,7 @@ final class ChatGptSyncCoordinator {
 
     Result sync(ChatGptProvider.Progress progress) throws Exception {
         ChatGptModels.LibrarySnapshot library;
+        final int[] originalPreviewBudget = {48};
         try {
             library = provider.loadLibrary(250, progress, (pages, pageFiles, objects) -> {
                 SQLiteDatabase pageDb = db.getWritableDatabase();
@@ -61,6 +62,18 @@ final class ChatGptSyncCoordinator {
                     pageDb.endTransaction();
                 }
                 IndexChangeNotifier.notify(context, accountId);
+                for (ChatGptModels.RemoteFile f : pageFiles) {
+                    if (f == null || !f.isImage()) continue;
+                    String identity = f.stableUrl();
+                    String source = f.thumbnailUrl;
+                    if (source == null || source.trim().isEmpty()) {
+                        if (originalPreviewBudget[0] <= 0) continue;
+                        originalPreviewBudget[0]--;
+                        source = identity;
+                    }
+                    ImageLoader.prefetchThumb(context, accountId, identity, source,
+                            () -> IndexChangeNotifier.notify(context, accountId));
+                }
             });
         } catch (Exception e) {
             db.recordSyncState(accountId, "Library", false, 0, message(e), "mode=metadata-only");

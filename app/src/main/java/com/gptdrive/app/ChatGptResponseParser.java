@@ -38,6 +38,8 @@ final class ChatGptResponseParser {
         f.messageId = clean(o.optString("message_id", ""));
         f.assetPointer = clean(o.optString("asset_pointer", ""));
         f.rawUrl = raw;
+        f.thumbnailUrl = firstStringDeep(o, "thumbnail_url", "thumbnailUrl", "preview_url",
+                "previewUrl", "small_url", "smallUrl");
         f.width = o.optInt("width", 0);
         f.height = o.optInt("height", 0);
         f.createdAt = parseTime(o.opt("created_at"));
@@ -70,6 +72,8 @@ final class ChatGptResponseParser {
         f.messageId = firstStringDeep(o, "message_id", "messageId");
         f.assetPointer = firstStringDeep(o, "asset_pointer", "assetPointer");
         f.rawUrl = rawUrl;
+        f.thumbnailUrl = firstStringDeep(o, "thumbnail_url", "thumbnailUrl", "preview_url",
+                "previewUrl", "small_url", "smallUrl");
         f.width = (int) Math.min(Integer.MAX_VALUE, firstLongDeep(o, "width", "image_width", "imageWidth"));
         f.height = (int) Math.min(Integer.MAX_VALUE, firstLongDeep(o, "height", "image_height", "imageHeight"));
         f.createdAt = firstTimeDeep(o, "created_at", "create_time", "createdAt", "uploaded_at", "uploadedAt");

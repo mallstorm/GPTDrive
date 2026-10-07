@@ -44,6 +44,7 @@ final class ImageLoader {
         view.setTag(stable);
         Bitmap cached = CACHE.get(cacheKey);
         if (cached != null && !cached.isRecycled()) {
+            view.clearColorFilter();
             view.setImageBitmap(cached);
             return;
         }
@@ -53,23 +54,38 @@ final class ImageLoader {
             if (b != null) CACHE.put(cacheKey, b);
             view.post(() -> {
                 Object tag = view.getTag();
-                if (b != null && !b.isRecycled() && stable.equals(tag)) view.setImageBitmap(b);
+                if (b != null && !b.isRecycled() && stable.equals(tag)) {
+                    view.clearColorFilter();
+                    view.setImageBitmap(b);
+                }
             });
         });
     }
 
     static void prefetchThumb(Context context, long accountId, String url) {
-        if (context == null || url == null || url.trim().isEmpty()) return;
+        prefetchThumb(context, accountId, url, url, null);
+    }
+
+    static void prefetchThumb(Context context, long accountId, String identityUrl,
+                              String sourceUrl, Runnable ready) {
+        if (context == null || identityUrl == null || identityUrl.trim().isEmpty()) return;
         Context app = context.getApplicationContext();
-        String stable = RemoteFileSource.stableUrl(url);
+        String stable = RemoteFileSource.stableUrl(identityUrl);
+        String source = sourceUrl == null || sourceUrl.trim().isEmpty() ? stable : sourceUrl.trim();
         String key = cacheKey(accountId, stable, THUMB_MAX);
         Bitmap cached = CACHE.get(key);
-        if (cached != null && !cached.isRecycled()) return;
+        if (cached != null && !cached.isRecycled()) {
+            if (ready != null) ready.run();
+            return;
+        }
         if (!PREFETCHING.add(key)) return;
         THUMB_EXEC.execute(() -> {
             try {
-                Bitmap b = fetchThumb(app, accountId, stable);
-                if (b != null) CACHE.put(key, b);
+                Bitmap b = fetchThumb(app, accountId, stable, source);
+                if (b != null) {
+                    CACHE.put(key, b);
+                    if (ready != null) ready.run();
+                }
             } finally {
                 PREFETCHING.remove(key);
             }
@@ -116,12 +132,17 @@ final class ImageLoader {
     }
 
     private static Bitmap fetchThumb(Context context, long accountId, String url) {
+        return fetchThumb(context, accountId, url, url);
+    }
+
+    private static Bitmap fetchThumb(Context context, long accountId, String identityUrl,
+                                     String sourceUrl) {
         try {
-            return ThumbnailDiskCache.get(context, accountId, url, THUMB_MAX);
+            return ThumbnailDiskCache.get(context, accountId, sourceUrl, identityUrl, THUMB_MAX);
         } catch (Exception first) {
             try {
-                ImageDiskCache.invalidate(context, accountId, url);
-                return ThumbnailDiskCache.get(context, accountId, url, THUMB_MAX);
+                ImageDiskCache.invalidate(context, accountId, sourceUrl);
+                return ThumbnailDiskCache.get(context, accountId, sourceUrl, identityUrl, THUMB_MAX);
             } catch (Exception ignored) {
                 return null;
             }

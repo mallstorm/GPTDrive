@@ -45,6 +45,14 @@ public final class LibraryWatcherWorker extends Worker {
                     } else if (!result.newItems.isEmpty()) {
                         notifyNew(app, account.id, result.newItems);
                         IndexChangeNotifier.notify(app, account.id);
+                        for (ChatGptModels.RemoteFile f : result.newItems) {
+                            if (f == null || !f.isImage()) continue;
+                            String identity = f.stableUrl();
+                            String source = f.thumbnailUrl == null || f.thumbnailUrl.trim().isEmpty()
+                                    ? identity : f.thumbnailUrl;
+                            ImageLoader.prefetchThumb(app, account.id, identity, source,
+                                    () -> IndexChangeNotifier.notify(app, account.id));
+                        }
                     }
                 } catch (ChatGptProvider.AuthException e) {
                     // Invalid sessions require user action; retrying cannot repair them.

@@ -333,7 +333,9 @@ public final class NativeBrowserActivity extends Activity {
 
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        image.setBackgroundColor(0xFFE9ECEF);
+        image.setBackgroundColor(0xFFF3F5F6);
+        image.setImageResource(R.drawable.ic_image_24);
+        image.setColorFilter(0xFFB0B8C1);
         ImageLoader.load(image, accountId, x.url);
         cell.addView(image, new LinearLayout.LayoutParams(-1, dp(138)));
 
@@ -360,7 +362,9 @@ public final class NativeBrowserActivity extends Activity {
             ImageView icon = new ImageView(this);
             if (DriveActions.isImage(x)) {
                 icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                icon.setBackgroundColor(0xFFE9ECEF);
+                icon.setBackgroundColor(0xFFF3F5F6);
+                icon.setImageResource(R.drawable.ic_image_24);
+                icon.setColorFilter(0xFFB0B8C1);
                 ImageLoader.load(icon, accountId, x.url);
             } else {
                 icon.setImageResource(R.drawable.ic_folder_24);
