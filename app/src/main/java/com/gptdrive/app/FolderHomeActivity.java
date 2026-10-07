@@ -302,9 +302,8 @@ public final class FolderHomeActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(8), dp(4), dp(6), dp(4));
-        row.setBackground(gradientRound(new int[]{0xFAFFFFFF, 0xF3F8FBFF}, 16, 0xDDE5E9ED, 1));
-        row.setElevation(dp(1));
-        row.addView(new FolderTypeIconView(this, iconRes), new LinearLayout.LayoutParams(dp(54), dp(50)));
+        row.setBackground(round(Color.WHITE, 13, 0xFFE8EBED, 1));
+        row.addView(rawIcon(iconRes), new LinearLayout.LayoutParams(dp(54), dp(50)));
 
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
