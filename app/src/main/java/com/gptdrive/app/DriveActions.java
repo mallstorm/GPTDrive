@@ -47,12 +47,26 @@ final class DriveActions {
         try {
             Uri uri = DocumentsContract.buildDocumentUri(AUTHORITY, "file:" + item.id);
             Intent i = new Intent(Intent.ACTION_VIEW);
-            i.setDataAndType(uri, mime.isEmpty() ? "*/*" : mime);
+            i.setDataAndType(uri, mime.isEmpty() ? inferredMime(name) : mime);
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             context.startActivity(Intent.createChooser(i, "Открыть файл"));
         } catch (Exception e) {
             Toast.makeText(context, "Нет приложения для открытия этого формата", Toast.LENGTH_LONG).show();
         }
+    }
+
+    private static String inferredMime(String name) {
+        if (name.endsWith(".md") || name.endsWith(".txt") || name.endsWith(".log")) return "text/plain";
+        if (name.endsWith(".json")) return "application/json";
+        if (name.endsWith(".xml")) return "text/xml";
+        if (name.endsWith(".yaml") || name.endsWith(".yml")) return "text/plain";
+        if (name.endsWith(".csv")) return "text/csv";
+        if (name.endsWith(".pdf")) return "application/pdf";
+        if (name.endsWith(".zip")) return "application/zip";
+        if (name.endsWith(".mp4")) return "video/mp4";
+        if (name.endsWith(".webm")) return "video/webm";
+        if (name.endsWith(".mp3")) return "audio/mpeg";
+        return "*/*";
     }
 
     static void download(Context context,DriveItem item){
