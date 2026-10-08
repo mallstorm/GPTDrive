@@ -1,6 +1,12 @@
 package com.gptdrive.app;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
+
+import androidx.webkit.ProxyConfig;
+import androidx.webkit.ProxyController;
+import androidx.webkit.WebViewFeature;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -10,17 +16,21 @@ import java.net.Proxy;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Loopback CONNECT proxy that lets HttpURLConnection use app-scoped Smart DNS. */
+/** Loopback CONNECT proxy used by both HttpURLConnection and Android WebView. */
 final class SmartDnsProxy {
     private static final ExecutorService IO = Executors.newCachedThreadPool();
     private static final Object LOCK = new Object();
+    private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
+    private static final Executor MAIN = command -> MAIN_HANDLER.post(command);
+
     private static volatile ServerSocket server;
     private static volatile int port;
     private static volatile Context app;
+    private static volatile String webViewStatus = "";
 
     private SmartDnsProxy() {}
 
@@ -33,6 +43,43 @@ final class SmartDnsProxy {
         } catch (Exception e) {
             return Proxy.NO_PROXY;
         }
+    }
+
+    static String webViewStatus() { return webViewStatus; }
+
+    /** Applies Smart DNS to all WebViews without creating a second Android VPN. */
+    static void applyWebViewRouting(Context context, Runnable done) {
+        Context c = context.getApplicationContext();
+        SmartDnsManager.initialize(c);
+        Runnable callback = done == null ? () -> {} : done;
+        MAIN.execute(() -> {
+            try {
+                if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+                    webViewStatus = "WebView proxy override не поддерживается";
+                    callback.run();
+                    return;
+                }
+                ProxyController controller = ProxyController.getInstance();
+                if (!SmartDnsManager.isEnabled()) {
+                    controller.clearProxyOverride(MAIN, () -> {
+                        webViewStatus = "WebView: System DNS";
+                        callback.run();
+                    });
+                    return;
+                }
+                ensureStarted(c);
+                ProxyConfig config = new ProxyConfig.Builder()
+                        .addProxyRule("127.0.0.1:" + port)
+                        .build();
+                controller.setProxyOverride(config, MAIN, () -> {
+                    webViewStatus = "WebView: Smart DNS · 127.0.0.1:" + port;
+                    callback.run();
+                });
+            } catch (Throwable e) {
+                webViewStatus = "WebView proxy error: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                callback.run();
+            }
+        });
     }
 
     private static void ensureStarted(Context context) throws Exception {
@@ -79,9 +126,8 @@ final class SmartDnsProxy {
             upstream.setSoTimeout(0);
             client.setSoTimeout(0);
             OutputStream co = client.getOutputStream();
-            co.write("HTTP/1.1 200 Connection Established\r\nProxy-Agent: GPTDrive-SmartDNS/1\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            co.write("HTTP/1.1 200 Connection Established\r\nProxy-Agent: GPTDrive-SmartDNS/2\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
             co.flush();
-
             final Socket u = upstream;
             IO.execute(() -> pump(client, u));
             pump(u, client);
@@ -90,8 +136,7 @@ final class SmartDnsProxy {
                 client.getOutputStream().write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
             } catch (Exception ignored) {}
         } finally {
-            close(client);
-            close(upstream);
+            close(client); close(upstream);
         }
     }
 
@@ -99,12 +144,8 @@ final class SmartDnsProxy {
         try {
             InputStream in = from.getInputStream();
             OutputStream out = to.getOutputStream();
-            byte[] buf = new byte[16384];
-            int n;
-            while ((n = in.read(buf)) != -1) {
-                out.write(buf, 0, n);
-                out.flush();
-            }
+            byte[] buf = new byte[16384]; int n;
+            while ((n = in.read(buf)) != -1) { out.write(buf, 0, n); out.flush(); }
         } catch (Exception ignored) {
         } finally {
             try { to.shutdownOutput(); } catch (Exception ignored) {}
@@ -112,12 +153,9 @@ final class SmartDnsProxy {
     }
 
     private static byte[] readHeader(InputStream in, int max) throws Exception {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        int state = 0;
+        ByteArrayOutputStream out = new ByteArrayOutputStream(); int state = 0;
         while (out.size() < max) {
-            int b = in.read();
-            if (b < 0) break;
-            out.write(b);
+            int b = in.read(); if (b < 0) break; out.write(b);
             if ((state == 0 || state == 2) && b == '\r') state++;
             else if ((state == 1 || state == 3) && b == '\n') state++;
             else state = b == '\r' ? 1 : 0;
@@ -140,5 +178,5 @@ final class SmartDnsProxy {
     }
 
     private static void close(Socket s) { if (s != null) try { s.close(); } catch (Exception ignored) {} }
-    private static final class HostPort { final String host; final int port; HostPort(String h,int p){host=h;port=p;} }
+    private static final class HostPort { final String host; final int port; HostPort(String h, int p) { host = h; port = p; } }
 }
