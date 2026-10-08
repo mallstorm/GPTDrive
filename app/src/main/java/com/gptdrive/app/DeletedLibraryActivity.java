@@ -66,7 +66,7 @@ public final class DeletedLibraryActivity extends Activity {
 
         TextView back = text("‹", 30, false, TEXT);
         back.setGravity(Gravity.CENTER);
-        back.setOnClickListener(v -> finish());
+        back.setOnClickListener(v -> closePreviewOrFinish());
         bar.addView(back, new LinearLayout.LayoutParams(dp(42), dp(56)));
 
         LinearLayout titles = new LinearLayout(this);
@@ -81,16 +81,17 @@ public final class DeletedLibraryActivity extends Activity {
         titles.addView(subtitle);
         bar.addView(titles, new LinearLayout.LayoutParams(0, dp(56), 1));
 
-        TextView refresh = text("↻", 23, false, GREEN);
+        TextView refresh = text("⟳", 22, true, Color.WHITE);
         refresh.setGravity(Gravity.CENTER);
-        refresh.setBackground(round(0xFFEAF8F2, 18, 0, 0));
+        refresh.setBackground(round(GREEN, 20, 0, 0));
+        refresh.setElevation(dp(3));
         refresh.setOnClickListener(v -> {
             seedSessionCookies();
             correctingNavigation = false;
             web.stopLoading();
             web.loadUrl(DELETED_URL);
         });
-        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(38), dp(38));
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(40), dp(40));
         rp.setMargins(dp(4), 0, 0, 0);
         bar.addView(refresh, rp);
         root.addView(bar, new LinearLayout.LayoutParams(-1, dp(58)));
@@ -169,7 +170,7 @@ public final class DeletedLibraryActivity extends Activity {
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request != null && request.isForMainFrame()) {
                     String text = error == null ? "Не удалось открыть Library" : String.valueOf(error.getDescription());
-                    state.setText("Не удалось открыть ChatGPT Library: " + text + "\nНажмите ↻, чтобы повторить.");
+                    state.setText("Не удалось открыть ChatGPT Library: " + text + "\nНажмите ⟳, чтобы повторить.");
                     state.setVisibility(View.VISIBLE);
                 }
             }
@@ -223,14 +224,65 @@ public final class DeletedLibraryActivity extends Activity {
                 "'body{margin:0!important;max-width:100vw!important;}' +" +
                 "'nav,aside,header,footer{display:none!important;}' +" +
                 "'[data-testid*=sidebar],[data-testid*=navigation]{display:none!important;}' +" +
-                "'main{margin-left:0!important;max-width:100%!important;width:100%!important;padding-top:0!important;}';" +
+                "'main{margin-left:0!important;max-width:100%!important;width:100%!important;padding-top:0!important;}' +" +
+                "'#gptdrive-image-lightbox{position:fixed!important;inset:0!important;z-index:2147483647!important;background:rgba(8,12,18,.96)!important;display:flex!important;align-items:center!important;justify-content:center!important;padding:18px!important;box-sizing:border-box!important;}' +" +
+                "'#gptdrive-image-lightbox img{display:block!important;max-width:100%!important;max-height:92vh!important;width:auto!important;height:auto!important;object-fit:contain!important;border-radius:12px!important;box-shadow:0 14px 50px rgba(0,0,0,.45)!important;}' +" +
+                "'#gptdrive-image-lightbox .gptdrive-close{position:absolute!important;top:16px!important;right:16px!important;width:42px!important;height:42px!important;border:0!important;border-radius:21px!important;background:rgba(255,255,255,.94)!important;color:#101828!important;font-size:28px!important;line-height:42px!important;text-align:center!important;padding:0!important;box-shadow:0 4px 16px rgba(0,0,0,.28)!important;}';" +
                 "document.head.appendChild(s);" +
                 "document.documentElement.style.overscrollBehavior='none';" +
                 "document.body.style.overscrollBehavior='none';" +
                 "document.body.style.overflowX='hidden';" +
+                "function applyGap(){" +
+                "try{" +
+                "var buttons=Array.prototype.slice.call(document.querySelectorAll('button'));" +
+                "var clear=buttons.find(function(b){var t=(b.innerText||b.textContent||'').trim();return /Очистить корзину|Empty trash/i.test(t);});" +
+                "if(!clear)return;" +
+                "var p=clear.parentElement;" +
+                "while(p&&p!==document.body){var r=p.getBoundingClientRect();if(r.width>window.innerWidth*.72&&r.height>70){p.style.setProperty('margin-bottom','28px','important');break;}p=p.parentElement;}" +
+                "}catch(e){}" +
+                "}" +
+                "function closeLightbox(){var o=document.getElementById('gptdrive-image-lightbox');if(o)o.remove();document.body.style.overflow='';}" +
+                "function openLightbox(img){" +
+                "closeLightbox();" +
+                "var o=document.createElement('div');o.id='gptdrive-image-lightbox';" +
+                "var c=img.cloneNode(true);c.removeAttribute('class');c.removeAttribute('style');c.removeAttribute('width');c.removeAttribute('height');c.draggable=false;" +
+                "var x=document.createElement('button');x.className='gptdrive-close';x.setAttribute('aria-label','Закрыть');x.textContent='×';" +
+                "x.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();closeLightbox();},true);" +
+                "o.addEventListener('click',function(e){if(e.target===o)closeLightbox();},true);" +
+                "o.appendChild(c);o.appendChild(x);document.body.appendChild(o);document.body.style.overflow='hidden';" +
+                "}" +
+                "if(!window.__gptdriveTrashClickInstalled){" +
+                "window.__gptdriveTrashClickInstalled=true;" +
+                "document.addEventListener('click',function(e){" +
+                "var t=e.target;var img=null;" +
+                "if(t&&t.tagName==='IMG')img=t;else if(t&&t.closest)img=t.closest('img');" +
+                "if(!img||img.closest('#gptdrive-image-lightbox'))return;" +
+                "var r=img.getBoundingClientRect();if(r.width<120||r.height<100)return;" +
+                "e.preventDefault();e.stopPropagation();if(e.stopImmediatePropagation)e.stopImmediatePropagation();openLightbox(img);" +
+                "},true);" +
+                "}" +
+                "applyGap();" +
+                "if(window.__gptdriveTrashObserver)window.__gptdriveTrashObserver.disconnect();" +
+                "var timer=null;window.__gptdriveTrashObserver=new MutationObserver(function(){clearTimeout(timer);timer=setTimeout(applyGap,120);});" +
+                "window.__gptdriveTrashObserver.observe(document.body,{childList:true,subtree:true});" +
                 "}catch(e){}" +
                 "})();";
         try { view.evaluateJavascript(js, null); } catch (Exception ignored) {}
+    }
+
+    private void closePreviewOrFinish() {
+        if (web == null) {
+            finish();
+            return;
+        }
+        String js = "(function(){var o=document.getElementById('gptdrive-image-lightbox');if(o){o.remove();document.body.style.overflow='';return true;}return false;})()";
+        try {
+            web.evaluateJavascript(js, value -> {
+                if (!"true".equals(value)) finish();
+            });
+        } catch (Exception e) {
+            finish();
+        }
     }
 
     private void seedSessionCookies() {
@@ -248,7 +300,7 @@ public final class DeletedLibraryActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    @Override public void onBackPressed() { finish(); }
+    @Override public void onBackPressed() { closePreviewOrFinish(); }
 
     @Override protected void onDestroy() {
         if (web != null) {
