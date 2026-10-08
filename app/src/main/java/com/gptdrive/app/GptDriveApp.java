@@ -22,12 +22,14 @@ public final class GptDriveApp extends Application implements Application.Activi
         registerActivityLifecycleCallbacks(this);
         SmartDnsManager.initialize(this);
         SmartDnsProxy.applyWebViewRouting(this, null);
+        if (SmartDnsManager.isEnabled()) RoutingForegroundService.ensureStarted(this);
         LibraryWatcherService.ensureStarted(this);
     }
 
     @Override public void onActivityStarted(Activity activity) {
         if (started++ == 0 && !changing) {
             AppLockManager.onForeground(this);
+            if (SmartDnsManager.isEnabled()) RoutingForegroundService.ensureStarted(this);
             if (AppLockManager.needsUnlock(this) && !(activity instanceof UnlockActivity)) {
                 startActivity(new Intent(this, UnlockActivity.class)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP));
@@ -36,7 +38,11 @@ public final class GptDriveApp extends Application implements Application.Activi
     }
 
     @Override public void onActivityResumed(Activity activity) {
-        if (Build.VERSION.SDK_INT < 33 || !LibraryWatcherService.isEnabled(this)) return;
+        if (SmartDnsManager.isEnabled() && !RoutingForegroundService.isRunning()) {
+            RoutingForegroundService.ensureStarted(this);
+        }
+        if (Build.VERSION.SDK_INT < 33) return;
+        if (!LibraryWatcherService.isEnabled(this) && !SmartDnsManager.isEnabled()) return;
         if (activity instanceof UnlockActivity || AppLockManager.needsUnlock(this)) return;
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
         android.content.SharedPreferences p = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
