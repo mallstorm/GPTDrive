@@ -12,8 +12,21 @@ android {
         versionName '0.12.4'
     }
 
+    signingConfigs {
+        release {
+            def ksPath = System.getenv('ANDROID_KEYSTORE_PATH')
+            if (ksPath != null && !ksPath.trim().isEmpty()) {
+                storeFile file(ksPath)
+            }
+            storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+            keyAlias System.getenv('ANDROID_KEY_ALIAS')
+            keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -29,19 +42,12 @@ android {
 dependencies {
     implementation 'androidx.biometric:biometric:1.1.0'
     implementation 'androidx.work:work-runtime:2.10.0'
-
-    // Robust in-app media playback.
     implementation 'androidx.media3:media3-exoplayer:1.9.4'
     implementation 'androidx.media3:media3-ui:1.9.4'
-
-    // 7-Zip and RAR archive readers.
     implementation 'org.apache.commons:commons-compress:1.28.0'
     implementation 'org.tukaani:xz:1.10'
     implementation 'com.github.junrar:junrar:8.1.1'
-
-    // PDF text search while PdfRenderer remains responsible for page rendering.
     implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
-
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
 }
