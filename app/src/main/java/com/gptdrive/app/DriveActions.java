@@ -44,6 +44,15 @@ final class DriveActions {
             context.startActivity(i);
             return;
         }
+        boolean preview = name.matches(".*\\\\.(md|txt|log|json|xml|yaml|yml|csv|pdf|zip)$") ||
+                mime.equals("application/pdf") || mime.equals("application/zip") ||
+                mime.startsWith("text/") || mime.equals("application/json");
+        if (!"external".equals(preference) && preview) {
+            Intent i = new Intent(context, FilePreviewActivity.class);
+            i.putExtra(FilePreviewActivity.EXTRA_ID, item.id);
+            context.startActivity(i);
+            return;
+        }
         try {
             Uri uri = DocumentsContract.buildDocumentUri(AUTHORITY, "file:" + item.id);
             Intent i = new Intent(Intent.ACTION_VIEW);
