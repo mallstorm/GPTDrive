@@ -4,39 +4,43 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Full light surface so launcher masks never expose dark corners -->
+    <!-- Clean light launcher surface -->
     <path android:fillColor="#FFFFFF" android:pathData="M0,0 H108 V108 H0 Z"/>
 
-    <!-- Enlarged library tabs: deliberately fill more of the launcher safe zone -->
-    <path android:fillColor="#16C89B" android:pathData="M14,19 C14,14 18,11 23,11 H66 C71,11 75,15 75,20 V63 H14 Z"/>
-    <path android:fillColor="#FFC23E" android:pathData="M24,28 C24,23 28,20 33,20 H77 C82,20 86,24 86,29 V67 H24 Z"/>
-    <path android:fillColor="#2BAAF6" android:pathData="M32,36 C32,31 36,28 41,28 H86 C91,28 95,32 95,37 V70 H32 Z"/>
+    <!-- Library tabs, large enough to remain readable after launcher masking -->
+    <path android:fillColor="#249AF2" android:pathData="M19,22 C19,17 23,14 28,14 H61 C66,14 70,18 70,23 V59 H19 Z"/>
+    <path android:fillColor="#FFBF35" android:pathData="M29,30 C29,25 33,22 38,22 H72 C77,22 81,26 81,31 V63 H29 Z"/>
+    <path android:fillColor="#18C79A" android:pathData="M39,37 C39,32 43,29 48,29 H82 C87,29 91,33 91,38 V67 H39 Z"/>
 
-    <!-- Large white folder -->
-    <path android:fillColor="#F8FAFC" android:pathData="M8,47 C8,42 12,38 17,38 H31 L38,45 H91 C97,45 100,49 100,54 V90 C100,96 96,99 90,99 H18 C12,99 8,95 8,89 Z"/>
-    <path android:fillColor="#E5E7EB" android:pathData="M8,53 H100 V57 H8 Z"/>
+    <!-- White folder body -->
+    <path android:fillColor="#F8FAFD" android:pathData="M13,45 C13,41 17,37 22,37 H34 L40,43 H88 C94,43 98,47 98,52 V87 C98,93 94,97 88,97 H22 C16,97 13,93 13,87 Z"/>
+    <path android:fillColor="#DCE5EE" android:pathData="M13,51 H98 V55 H13 Z"/>
 
-    <!-- High-contrast ChatGPT badge, intentionally large for 48-64 px launchers -->
-    <path android:fillColor="#079B73" android:pathData="M74,58 A18,18 0,1 1,73.9,58 Z"/>
-    <path android:fillColor="#0BB589" android:pathData="M74,61 A15,15 0,1 1,73.9,61 Z"/>
+    <!-- Soft cloud: makes the Drive/cloud meaning obvious at a glance -->
+    <path android:fillColor="#DFF2FF" android:pathData="M17,82 C12,82 8,78 8,73 C8,68 12,64 17,64 C19,57 25,53 32,53 C40,53 46,59 47,66 C53,66 57,70 57,75 C57,80 53,84 48,84 H18 C17.7,84 17.3,84 17,84 Z"/>
+    <path android:fillColor="#A9D9FB" android:pathData="M18,81 C14,81 11,78 11,74 C11,70 14,67 18,67 C20,61 25,57 32,57 C39,57 44,62 45,68 C50,68 53,71 53,75 C53,79 50,81 46,81 Z"/>
 
-    <!-- Simplified thick white knot: survives downscaling better than the previous thin green mark -->
+    <!-- Strong green ChatGPT badge -->
+    <path android:fillColor="#079B73" android:pathData="M76,56 A20,20 0,1 1,75.9,56 Z"/>
+    <path android:fillColor="#0DBB8D" android:pathData="M76,59 A17,17 0,1 1,75.9,59 Z"/>
+
+    <!-- Simplified high-contrast knot, tuned for small launcher sizes -->
     <path android:fillColor="@android:color/transparent"
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="4.2"
+        android:strokeWidth="4.6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M66,70 C66,64 71,60 76,60 C82,60 86,64 86,70 C86,75 82,80 76,80 C71,80 66,75 66,70 Z"/>
+        android:pathData="M67,70 C67,64 71,60 77,60 C83,60 87,64 87,70 C87,76 83,80 77,80 C71,80 67,76 67,70 Z"/>
     <path android:fillColor="@android:color/transparent"
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="4.2"
+        android:strokeWidth="4.6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M69,63 C74,59 81,61 85,66 C89,71 87,78 82,82 C77,86 70,84 66,79 C62,74 64,67 69,63 Z"/>
+        android:pathData="M70,63 C75,59 82,61 86,66 C90,71 88,78 83,82 C78,86 71,84 67,79 C63,74 65,67 70,63 Z"/>
     <path android:fillColor="@android:color/transparent"
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="4.2"
+        android:strokeWidth="4.6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M69,66 L76,62 L84,67 L84,75 L76,80 L68,75 Z"/>
+        android:pathData="M70,66 L77,62 L85,67 L85,75 L77,80 L69,75 Z"/>
 </vector>
