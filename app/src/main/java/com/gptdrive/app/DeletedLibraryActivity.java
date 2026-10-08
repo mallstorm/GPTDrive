@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -20,9 +21,10 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 /**
- * Official ChatGPT Library "Recently deleted" surface embedded in GPT Drive.
- * We intentionally rely on ChatGPT's own UI for listing, restore and permanent delete
- * instead of guessing private backend endpoints that may change without notice.
+ * Locked official ChatGPT Library "Recently deleted" surface embedded in GPT Drive.
+ * The WebView is intentionally restricted to /library?deleted=true so it behaves like
+ * an application screen instead of a general browser. Restore/permanent-delete actions
+ * remain handled by ChatGPT's own authenticated UI.
  */
 public final class DeletedLibraryActivity extends Activity {
     public static final String EXTRA_ACCOUNT_ID = "account_id";
@@ -41,6 +43,7 @@ public final class DeletedLibraryActivity extends Activity {
     private ProgressBar progress;
     private TextView state;
     private long accountId;
+    private boolean correctingNavigation;
 
     @Override protected void onCreate(Bundle stateBundle) {
         super.onCreate(stateBundle);
@@ -63,7 +66,7 @@ public final class DeletedLibraryActivity extends Activity {
 
         TextView back = text("‹", 30, false, TEXT);
         back.setGravity(Gravity.CENTER);
-        back.setOnClickListener(v -> goBack());
+        back.setOnClickListener(v -> finish());
         bar.addView(back, new LinearLayout.LayoutParams(dp(42), dp(56)));
 
         LinearLayout titles = new LinearLayout(this);
@@ -83,27 +86,14 @@ public final class DeletedLibraryActivity extends Activity {
         refresh.setBackground(round(0xFFEAF8F2, 18, 0, 0));
         refresh.setOnClickListener(v -> {
             seedSessionCookies();
-            web.reload();
+            correctingNavigation = false;
+            web.stopLoading();
+            web.loadUrl(DELETED_URL);
         });
         LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(38), dp(38));
         rp.setMargins(dp(4), 0, 0, 0);
         bar.addView(refresh, rp);
         root.addView(bar, new LinearLayout.LayoutParams(-1, dp(58)));
-
-        LinearLayout info = new LinearLayout(this);
-        info.setGravity(Gravity.CENTER_VERTICAL);
-        info.setPadding(dp(12), dp(7), dp(12), dp(7));
-        info.setBackground(round(Color.WHITE, 14, 0xFFE4E8EB, 1));
-        TextView badge = text("ChatGPT", 10, true, GREEN);
-        badge.setGravity(Gravity.CENTER);
-        badge.setBackground(round(0xFFEAF8F2, 11, 0, 0));
-        info.addView(badge, new LinearLayout.LayoutParams(dp(70), dp(30)));
-        TextView note = text("Официальная корзина Library — восстановление и окончательное удаление выполняет сам ChatGPT.", 10, false, MUTED);
-        note.setPadding(dp(10), 0, 0, 0);
-        info.addView(note, new LinearLayout.LayoutParams(0, -2, 1));
-        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(-1, -2);
-        ip.setMargins(dp(12), dp(4), dp(12), dp(7));
-        root.addView(info, ip);
 
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
@@ -111,7 +101,7 @@ public final class DeletedLibraryActivity extends Activity {
         root.addView(progress, new LinearLayout.LayoutParams(-1, dp(2)));
 
         FrameLayout holder = new FrameLayout(this);
-        holder.setBackground(round(Color.WHITE, 16, 0xFFE4E8EB, 1));
+        holder.setBackgroundColor(Color.WHITE);
 
         web = new WebView(this);
         WebSettings s = web.getSettings();
@@ -123,10 +113,15 @@ public final class DeletedLibraryActivity extends Activity {
         s.setLoadWithOverviewMode(false);
         s.setBuiltInZoomControls(false);
         s.setDisplayZoomControls(false);
+        s.setSupportZoom(false);
         s.setMediaPlaybackRequiresUserGesture(true);
         s.setUserAgentString(AppIdentity.userAgent());
         web.setBackgroundColor(Color.WHITE);
-        web.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        web.setHorizontalScrollBarEnabled(false);
+        web.setVerticalScrollBarEnabled(false);
+        web.setHapticFeedbackEnabled(false);
+        web.setOnLongClickListener(v -> true);
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
@@ -144,12 +139,31 @@ public final class DeletedLibraryActivity extends Activity {
             }
         });
         web.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (request == null || !request.isForMainFrame()) return false;
+                String url = request.getUrl() == null ? "" : request.getUrl().toString();
+                if (isDeletedLibraryUrl(url)) return false;
+                blockNavigation(url);
+                return true;
+            }
+
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                if (!isDeletedLibraryUrl(url)) {
+                    blockNavigation(url);
+                    return;
+                }
                 state.setVisibility(View.GONE);
             }
 
             @Override public void onPageFinished(WebView view, String url) {
                 progress.setVisibility(View.GONE);
+                if (!isDeletedLibraryUrl(url)) {
+                    blockNavigation(url);
+                    return;
+                }
+                correctingNavigation = false;
+                view.clearHistory();
+                lockPageChrome(view);
             }
 
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
@@ -163,10 +177,60 @@ public final class DeletedLibraryActivity extends Activity {
 
         holder.addView(web, new FrameLayout.LayoutParams(-1, -1));
         holder.addView(state, new FrameLayout.LayoutParams(-1, -1));
-        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(-1, 0, 1);
-        hp.setMargins(dp(8), 0, dp(8), dp(8));
-        root.addView(holder, hp);
+        root.addView(holder, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
+    }
+
+    private boolean isDeletedLibraryUrl(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return false;
+        try {
+            Uri u = Uri.parse(raw);
+            String scheme = u.getScheme();
+            String host = u.getHost();
+            if (!"https".equalsIgnoreCase(scheme)) return false;
+            if (!("chatgpt.com".equalsIgnoreCase(host) || "www.chatgpt.com".equalsIgnoreCase(host))) return false;
+            String path = u.getPath();
+            if (path == null) return false;
+            while (path.endsWith("/") && path.length() > 1) path = path.substring(0, path.length() - 1);
+            return "/library".equals(path) && "true".equalsIgnoreCase(u.getQueryParameter("deleted"));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void blockNavigation(String attemptedUrl) {
+        if (web == null || correctingNavigation) return;
+        correctingNavigation = true;
+        web.stopLoading();
+        web.clearHistory();
+        if (attemptedUrl != null && (attemptedUrl.contains("/auth/") || attemptedUrl.contains("login"))) {
+            state.setText("Сессия ChatGPT требует повторного входа. Обновите подключение аккаунта и откройте «Удалённые» снова.");
+            state.setVisibility(View.VISIBLE);
+            progress.setVisibility(View.GONE);
+            correctingNavigation = false;
+            return;
+        }
+        web.post(() -> web.loadUrl(DELETED_URL));
+    }
+
+    private void lockPageChrome(WebView view) {
+        String js = "(function(){" +
+                "try{" +
+                "var id='gptdrive-locked-trash-style';" +
+                "var old=document.getElementById(id);if(old)old.remove();" +
+                "var s=document.createElement('style');s.id=id;" +
+                "s.textContent='html,body{overscroll-behavior:none!important;overflow-x:hidden!important;}' +" +
+                "'body{margin:0!important;max-width:100vw!important;}' +" +
+                "'nav,aside,header,footer{display:none!important;}' +" +
+                "'[data-testid*=sidebar],[data-testid*=navigation]{display:none!important;}' +" +
+                "'main{margin-left:0!important;max-width:100%!important;width:100%!important;padding-top:0!important;}';" +
+                "document.head.appendChild(s);" +
+                "document.documentElement.style.overscrollBehavior='none';" +
+                "document.body.style.overscrollBehavior='none';" +
+                "document.body.style.overflowX='hidden';" +
+                "}catch(e){}" +
+                "})();";
+        try { view.evaluateJavascript(js, null); } catch (Exception ignored) {}
     }
 
     private void seedSessionCookies() {
@@ -184,15 +248,12 @@ public final class DeletedLibraryActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    private void goBack() {
-        if (web != null && web.canGoBack()) web.goBack(); else finish();
-    }
-
-    @Override public void onBackPressed() { goBack(); }
+    @Override public void onBackPressed() { finish(); }
 
     @Override protected void onDestroy() {
         if (web != null) {
             web.stopLoading();
+            web.clearHistory();
             web.setWebChromeClient(null);
             web.setWebViewClient(null);
             web.destroy();
