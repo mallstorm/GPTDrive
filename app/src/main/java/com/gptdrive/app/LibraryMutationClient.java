@@ -69,33 +69,36 @@ final class LibraryMutationClient {
                 "/backend-api/files/library/nodes?view=deleted&limit=200&include_saved_entities=true&include_folder_counts=true"
         };
         Exception last = null;
+        boolean confirmedTrashResponse = false;
         for (String first : candidates) {
             try {
-                loadTrashCandidate(first, out);
+                confirmedTrashResponse |= loadTrashCandidate(first, out);
                 if (!out.isEmpty()) break;
             } catch (Exception e) { last = e; }
         }
-        if (out.isEmpty() && last != null && !hasShadow()) throw last;
+        if (out.isEmpty() && !confirmedTrashResponse && !hasShadow())
+            throw last != null ? last : new java.io.IOException("ChatGPT не подтвердил доступность раздела удалённых");
         return new ArrayList<>(out.values());
     }
 
-    private void loadTrashCandidate(String first, LinkedHashMap<String, TrashItem> out) throws Exception {
+    private boolean loadTrashCandidate(String first, LinkedHashMap<String, TrashItem> out) throws Exception {
         String endpoint = first;
         String seenCursor = "";
         for (int page = 0; page < 3; page++) {
             HttpResponse r = request("GET", endpoint, null, true);
             if (r.code == 401 || r.code == 403) throw new java.io.IOException("Сессия ChatGPT недоступна (HTTP " + r.code + ")");
-            if (r.code == 404 || r.code == 405) return;
+            if (r.code == 404 || r.code == 405) return false;
             if (r.code != 200) throw new java.io.IOException("Удалённые: HTTP " + r.code);
             Object root = ChatGptResponseParser.parse(r.bodyUtf8());
-            if (root == null) return;
+            if (root == null) return false;
             boolean trustedTrashEndpoint = endpoint.contains("/library/trash");
             walkDeleted(root, out, trustedTrashEndpoint, 0);
             String cursor = findCursor(root);
-            if (cursor.isEmpty() || cursor.equals(seenCursor)) return;
+            if (cursor.isEmpty() || cursor.equals(seenCursor)) return true;
             seenCursor = cursor;
             endpoint = replaceOrAppend(endpoint, "cursor", cursor);
         }
+        return true;
     }
 
     boolean moveToTrash(DriveItem item) throws Exception {
