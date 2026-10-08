@@ -3,6 +3,10 @@ package com.gptdrive.app;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.content.ContentValues;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.net.Uri;
 import android.graphics.Color;
 import android.graphics.pdf.PdfRenderer;
 import android.os.Bundle;
@@ -64,11 +68,52 @@ public final class FilePreviewActivity extends Activity {
                 body.removeAllViews();
                 if (name.endsWith(".zip")) showZip(cache);
                 else if (name.endsWith(".pdf")) showPdf(cache);
+                else if (name.matches(".*\\\\.(docx|xlsx|pptx)$")) showOffice(cache);
+                else if (name.matches(".*\\\\.(mp4|webm|3gp|mp3|m4a|wav|ogg)$")) showMedia(cache);
                 else showText(cache,name);
             });
         } catch(Exception e) {
             runOnUiThread(() -> {body.removeAllViews();label("Не удалось открыть: "+e.getMessage());});
         }
+    }
+    private void showMedia(File file) {
+        try {
+            VideoView video = new VideoView(this);
+            video.setVideoURI(Uri.fromFile(file));
+            body.addView(video,new LinearLayout.LayoutParams(-1,600));
+            MediaController controls = new MediaController(this);
+            controls.setAnchorView(video);
+            video.setMediaController(controls);
+            video.setOnErrorListener((player,what,extra)->{
+                label("Формат или кодек не поддерживается. Скачайте файл для внешнего плеера.");
+                return true;
+            });
+            video.start();
+        } catch(Exception e){label("Не удалось воспроизвести: "+e.getMessage());}
+    }
+    private void showOffice(File file) {
+        try(ZipFile zip=new ZipFile(file)) {
+            String name=item.name.toLowerCase(Locale.ROOT);
+            String prefix=name.endsWith(".docx")?"word/document.xml":name.endsWith(".xlsx")?"xl/sharedStrings.xml":"ppt/slides/slide1.xml";
+            ZipEntry entry=zip.getEntry(prefix);
+            if(entry==null){label("Предпросмотр текста недоступен для структуры этого документа.");return;}
+            if(entry.getSize()>4*1024*1024){label("Документ слишком большой для текстового предпросмотра.");return;}
+            ByteArrayOutputStream out=new ByteArrayOutputStream();
+            try(InputStream in=zip.getInputStream(entry)){
+                byte[] buf=new byte[8192];int n;
+                while((n=in.read(buf))!=-1){
+                    if(out.size()+n>4*1024*1024)throw new IOException("Слишком большой документ");
+                    out.write(buf,0,n);
+                }
+            }
+            String xml=out.toString("UTF-8");
+            String text=xml.replaceAll("</(?:w:p|a:p|row)>","\\n")
+                    .replaceAll("<[^>]+>","")
+                    .replace("&amp;","&").replace("&lt;","<").replace("&gt;",">")
+                    .replace("&quot;","\\\"").replace("&apos;","'");
+            TextView view=label(text);
+            view.setTextIsSelectable(true);
+        }catch(Exception e){label("Ошибка предпросмотра документа: "+e.getMessage());}
     }
     private void showText(File file,String name) {
         try {
@@ -92,7 +137,56 @@ public final class FilePreviewActivity extends Activity {
                 count++;
             }
             if(entries.hasMoreElements()) label("Показаны первые 1000 записей");
+            Button extract=new Button(this);
+            extract.setText("Извлечь файлы в Загрузки");
+            extract.setOnClickListener(v->{
+                extract.setEnabled(false);
+                new Thread(()->{
+                    try {int saved=extractZip(file);
+                        runOnUiThread(()->{label("Извлечено файлов: "+saved);extract.setEnabled(true);});
+                    }catch(Exception e){runOnUiThread(()->{label("Ошибка распаковки: "+e.getMessage());extract.setEnabled(true);});}
+                },"gptdrive-unzip").start();
+            });
+            body.addView(extract);
         }catch(Exception e){label("Ошибка ZIP: "+e.getMessage());}
+    }
+    private int extractZip(File file) throws Exception {
+        int count=0;long total=0;
+        try(ZipFile zip=new ZipFile(file)){
+            Enumeration<? extends ZipEntry> entries=zip.entries();
+            while(entries.hasMoreElements()){
+                ZipEntry entry=entries.nextElement();
+                if(entry.isDirectory())continue;
+                if(++count>1000)throw new IOException("Архив содержит больше 1000 файлов");
+                String path=entry.getName().replace('\\\\','/');
+                if(path.startsWith("/")||path.contains("../")||path.equals("..")||path.contains(":"))
+                    throw new IOException("Небезопасный путь в архиве");
+                String basename=path.substring(path.lastIndexOf('/')+1);
+                if(basename.isEmpty())continue;
+                ContentValues values=new ContentValues();
+                values.put(MediaStore.MediaColumns.DISPLAY_NAME,basename);
+                values.put(MediaStore.MediaColumns.RELATIVE_PATH,Environment.DIRECTORY_DOWNLOADS+"/GPTDrive");
+                values.put(MediaStore.MediaColumns.IS_PENDING,1);
+                Uri dest=getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values);
+                if(dest==null)throw new IOException("Не удалось создать файл");
+                boolean ok=false;
+                try(InputStream in=zip.getInputStream(entry);OutputStream out=getContentResolver().openOutputStream(dest)){
+                    if(out==null)throw new IOException("Недоступно хранилище");
+                    byte[] buf=new byte[32768];int n;long one=0;
+                    while((n=in.read(buf))!=-1){
+                        one+=n;total+=n;
+                        if(one>128L*1024*1024||total>256L*1024*1024)
+                            throw new IOException("Превышен безопасный объём распаковки");
+                        out.write(buf,0,n);
+                    }
+                    ok=true;
+                }finally{
+                    if(ok){ContentValues done=new ContentValues();done.put(MediaStore.MediaColumns.IS_PENDING,0);getContentResolver().update(dest,done,null,null);}
+                    else getContentResolver().delete(dest,null,null);
+                }
+            }
+        }
+        return count;
     }
     private void showPdf(File file) {
         try(ParcelFileDescriptor fd=ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_READ_ONLY);
