@@ -2,6 +2,16 @@
 
 GPT Drive is a native Android client that presents ChatGPT Library content as cloud-drive-like storage through Android `DocumentsProvider` and the app's own folder-first browser.
 
+## v0.12.8 — ChatGPT-only Smart DNS
+
+- Removed Google Full routing and all Gemini probes, domain routing and UI controls.
+- The shared DNS registry is retained, but GPT Drive imports only OpenAI-capable providers and routes only ChatGPT, OpenAI, oaistatic and oaiusercontent domains. Other hosts use the system network.
+- Health checks require a valid HTTP 200 ChatGPT session JSON response plus certificate-verified TLS to auth.openai.com. Logged-out `{}` is accepted; HTTP 403/401, redirects, challenge HTML and regional blocks are rejected.
+- HTTP probe decoding supports chunked transfer and Content-Length with bounded responses. Failure of an AAAA lookup no longer discards a working IPv4 answer.
+- Only successfully checked routes can be selected. Failed and untested routes remain visible for diagnostics/rechecks; no failed route is highlighted as selected. With no healthy route, the app reports System DNS fallback.
+- Smart Routing remains app-scoped: it does not redirect official ChatGPT or other installed applications and does not provide a Google login gateway. Google sign-in may require an external VPN.
+- Availability is checked on the user's current network. A successful network probe does not guarantee completion of an authenticated Library operation.
+
 ## v0.11.3 — Background watcher and app protection
 
 - Added a persistent, user-controlled Library watcher based on the Windows GPT Drive watcher model.
@@ -51,3 +61,4 @@ gradle :app:assembleDebug
 ```
 
 GitHub Actions validates pull requests targeting `main` and publishes the debug APK artifact for `main` builds.
+

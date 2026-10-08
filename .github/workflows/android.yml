@@ -37,6 +37,13 @@ jobs:
           test -s "$ANDROID_KEYSTORE_PATH"
       - name: Run unit tests
         run: gradle :app:testDebugUnitTest --stacktrace
+      - name: Check ChatGPT Smart DNS routes
+        timeout-minutes: 5
+        run: python3 tools/check_chatgpt_routes.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChatGPT-SmartDNS-diagnostics
+          path: route-diagnostics/
       - name: Build signed release APK
         run: gradle :app:assembleRelease --stacktrace
       - name: Verify APK signature
@@ -47,6 +54,7 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
       - uses: actions/upload-artifact@v4
         with:
-          name: GPTDrive-v0.12.7-google-full-v2-release
+          name: GPTDrive-v0.12.8-chatgpt-smartdns-release
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+

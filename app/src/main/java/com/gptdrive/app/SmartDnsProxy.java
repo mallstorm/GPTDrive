@@ -36,7 +36,6 @@ final class SmartDnsProxy {
 
     static Proxy proxy(Context context) {
         SmartDnsManager.initialize(context);
-        GoogleFullRouter.initialize(context);
         if (!SmartDnsManager.isEnabled()) return Proxy.NO_PROXY;
         try {
             ensureStarted(context.getApplicationContext());
@@ -52,7 +51,6 @@ final class SmartDnsProxy {
     static void applyWebViewRouting(Context context, Runnable done) {
         Context c = context.getApplicationContext();
         SmartDnsManager.initialize(c);
-        GoogleFullRouter.initialize(c);
         Runnable callback = done == null ? () -> {} : done;
         MAIN.execute(() -> {
             try {
@@ -89,8 +87,7 @@ final class SmartDnsProxy {
         synchronized (LOCK) {
             if (server != null && !server.isClosed()) return;
             app = context;
-            GoogleFullRouter.initialize(context);
-            ServerSocket s = new ServerSocket();
+                ServerSocket s = new ServerSocket();
             s.setReuseAddress(true);
             s.bind(new InetSocketAddress("127.0.0.1", 0), 32);
             server = s;
@@ -126,14 +123,7 @@ final class SmartDnsProxy {
             }
             HostPort hp = parseTarget(parts[1]);
 
-            // Official Google never goes through the generic AI Smart DNS pool.
-            // Gemini / AI Studio are explicitly excluded by GoogleFullRouter and
-            // continue through SmartDnsManager (GeoHide/Astracat/etc.).
-            if (GoogleFullRouter.isGoogleFullHost(hp.host)) {
-                upstream = GoogleFullRouter.connect(app, hp.host, hp.port);
-            } else {
-                upstream = SmartDnsManager.connect(app, hp.host, hp.port);
-            }
+            upstream = SmartDnsManager.connect(app, hp.host, hp.port);
 
             upstream.setSoTimeout(0);
             client.setSoTimeout(0);
@@ -192,3 +182,4 @@ final class SmartDnsProxy {
     private static void close(Socket s) { if (s != null) try { s.close(); } catch (Exception ignored) {} }
     private static final class HostPort { final String host; final int port; HostPort(String h, int p) { host = h; port = p; } }
 }
+

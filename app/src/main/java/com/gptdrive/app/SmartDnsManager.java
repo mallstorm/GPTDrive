@@ -46,14 +46,7 @@ import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
-/**
- * App-scoped AI Smart DNS router.
- *
- * This pool is intentionally responsible only for ChatGPT/OpenAI and Gemini/
- * Google AI traffic. Official Google account/services are intercepted first by
- * GoogleFullRouter and therefore never influence Smart DNS scoring or route
- * selection.
- */
+/** ChatGPT/OpenAI-only Smart DNS routing inside GPT Drive. */
 final class SmartDnsManager {
     static final String REGISTRY_URL =
             "https://raw.githubusercontent.com/mallstorm/OmniChat-DNS-Registry/main/dns-registry.json";
@@ -68,7 +61,6 @@ final class SmartDnsManager {
 
     private static final String CHATGPT_HOST = "chatgpt.com";
     private static final String CHATGPT_PATH = "/api/auth/session";
-    private static final String GEMINI_HOST = "gemini.google.com";
 
     private static final long REFRESH = 6L * 60L * 60L * 1000L;
     private static final long DNS_TTL = 60_000L;
@@ -95,7 +87,6 @@ final class SmartDnsManager {
         final int statusCode;
         final long testedAt, dnsMs, tlsMs, httpMs;
         final double score;
-        final boolean geminiTested, geminiOk;
 
         RouteView(Resolver r, Stats s, boolean sel, boolean en, double sc) {
             id = r.id;
@@ -112,8 +103,6 @@ final class SmartDnsManager {
             dnsMs = s == null ? -1 : s.dns;
             tlsMs = s == null ? -1 : s.tls;
             httpMs = s == null ? -1 : s.http;
-            geminiTested = s != null && s.geminiTested;
-            geminiOk = s != null && s.geminiOk;
             error = s == null ? "" : s.error;
         }
     }
@@ -146,8 +135,6 @@ final class SmartDnsManager {
     private static final class Stats {
         volatile boolean chatgptOk;
         volatile boolean chatgptBlocked;
-        volatile boolean geminiTested;
-        volatile boolean geminiOk;
         volatile int chatgptCode;
         volatile long testedAt;
         volatile long dns = -1;
@@ -185,7 +172,6 @@ final class SmartDnsManager {
         synchronized (SmartDnsManager.class) {
             if (initialized) return;
             app = context.getApplicationContext();
-            GoogleFullRouter.initialize(app);
             String cached = prefs().getString(CACHE, "");
             if (!cached.isEmpty()) install(cached);
             initialized = true;
@@ -194,7 +180,6 @@ final class SmartDnsManager {
                     if (isEnabled()) {
                         refreshIfStale();
                         sweep(false);
-                        GoogleFullRouter.sweepNow(app, null);
                     }
                 } catch (Exception ignored) {}
             }, 2, 15, TimeUnit.MINUTES);
@@ -227,7 +212,6 @@ final class SmartDnsManager {
         if (on) {
             RoutingForegroundService.ensureStarted(context);
             refreshAndSweep(context, null);
-            if (GoogleFullRouter.isEnabled()) GoogleFullRouter.refreshAndSweep(context, null);
         } else {
             RoutingForegroundService.stop(context);
         }
@@ -250,7 +234,7 @@ final class SmartDnsManager {
     static void setManualRoute(Context context, String id) {
         initialize(context);
         Resolver r = find(id);
-        if (r == null) return;
+        if (r == null || !healthy(r)) return;
         setRouteEnabled(context, id, true);
         prefs().edit().putBoolean(AUTO, false).putString(MANUAL, id).apply();
         selectedId = id;
@@ -324,13 +308,12 @@ final class SmartDnsManager {
 
     static String selectedSummary() {
         Resolver r = find(selectedId);
-        if (r == null || !routeEnabled(r.id)) r = choose(ranked(CHATGPT_HOST), System.currentTimeMillis(), CHATGPT_HOST);
-        if (r == null) return "System DNS";
+        if (r == null || !routeEnabled(r.id) || !healthy(r)) r = choose(ranked(CHATGPT_HOST), System.currentTimeMillis(), CHATGPT_HOST);
+        if (r == null) return "Нет проверенного маршрута · System DNS fallback";
         Stats s = STATS.get(r.id);
         String coverage = "";
         if (s != null && s.testedAt > 0) {
-            coverage = " · GPT " + mark(s.chatgptOk)
-                    + " · Gemini " + mark(s.geminiTested && s.geminiOk);
+            coverage = " · ChatGPT " + mark(s.chatgptOk);
         }
         return (isAuto() ? "AUTO · " : "MANUAL · ") + r.name + " · " + r.mode
                 + (s != null && s.dns >= 0 ? " · " + s.dns + " ms" : "") + coverage;
@@ -340,11 +323,7 @@ final class SmartDnsManager {
         initialize(context);
         if (!isEnabled()) return systemConnect(host, port);
 
-        // Official Google is a separate route and must never be evaluated by
-        // the generic Smart DNS pool.
-        if (GoogleFullRouter.isGoogleFullHost(host)) {
-            return GoogleFullRouter.connect(context, host, port);
-        }
+        if (!ChatGptRoutePolicy.isOpenAiHost(host)) return systemConnect(host, port);
 
         refreshIfStale();
         List<Resolver> list = ranked(host);
@@ -355,12 +334,9 @@ final class SmartDnsManager {
 
         Exception last = null;
         for (Resolver r : order) {
-            long t = System.nanoTime();
             try {
                 List<InetAddress> addresses = resolve(r, host);
                 Socket s = connectAddresses(addresses, port);
-                Stats st = STATS.computeIfAbsent(r.id, k -> new Stats());
-                st.dns = ms(t);
                 selectedId = r.id;
                 selectedUntil = isAuto() ? System.currentTimeMillis() + LEASE : Long.MAX_VALUE;
                 return s;
@@ -369,6 +345,8 @@ final class SmartDnsManager {
             }
         }
 
+        selectedId = "";
+        selectedUntil = 0;
         try {
             return systemConnect(host, port);
         } catch (Exception e) {
@@ -423,9 +401,7 @@ final class SmartDnsManager {
             if (caps != null) {
                 for (int j = 0; j < caps.length(); j++) {
                     String cap = caps.optString(j);
-                    if ("openai".equalsIgnoreCase(cap)
-                            || "gemini".equalsIgnoreCase(cap)
-                            || "google_ai_studio".equalsIgnoreCase(cap)) useful = true;
+                    if ("openai".equalsIgnoreCase(cap)) useful = true;
                 }
             }
             if (!useful) continue;
@@ -439,10 +415,14 @@ final class SmartDnsManager {
             if (da != null) {
                 for (int j = 0; j < da.length(); j++) {
                     String x = da.optString(j).trim();
-                    if (!x.isEmpty()) domains.add(x);
+                    if (ChatGptRoutePolicy.isOpenAiHost(x.replaceFirst("^\\*?\\.", ""))) domains.add(x);
                 }
             }
 
+            if (da != null && da.length() > 0 && domains.isEmpty()) continue;
+            if (domains.isEmpty()) {
+                domains.addAll(Arrays.asList("chatgpt.com", "openai.com", "oaistatic.com", "oaiusercontent.com"));
+            }
             JSONObject proto = p.optJSONObject("protocols");
             if (proto == null) continue;
             String doh = proto.optString("doh", "").trim();
@@ -454,14 +434,14 @@ final class SmartDnsManager {
         return out;
     }
 
-    private static void sweep(boolean force) {
+    private static synchronized void sweep(boolean force) {
         if ((!isEnabled() && !force) || resolvers.isEmpty()) return;
         List<Future<?>> futures = new ArrayList<>();
         for (Resolver r : resolvers) {
             if (r.matches(CHATGPT_HOST) && (force || routeEnabled(r.id))) futures.add(PROBES.submit(() -> probe(r)));
         }
         for (Future<?> f : futures) {
-            try { f.get(30, TimeUnit.SECONDS); } catch (Exception ignored) {}
+            try { f.get(120, TimeUnit.SECONDS); } catch (Exception ignored) {}
         }
         resetSelection();
         choose(ranked(CHATGPT_HOST), System.currentTimeMillis(), CHATGPT_HOST);
@@ -470,21 +450,19 @@ final class SmartDnsManager {
     private static void probe(Resolver r) {
         Stats st = STATS.computeIfAbsent(r.id, k -> new Stats());
         ProbeResult chat = probeHttp(r, CHATGPT_HOST, CHATGPT_PATH, true);
-        ProbeResult gemini = r.matches(GEMINI_HOST) ? probeHttp(r, GEMINI_HOST, "/", false) : null;
+        ProbeResult auth = probeTls(r, "auth.openai.com");
 
-        st.chatgptOk = chat.ok;
+        st.chatgptOk = chat.ok && auth.ok;
         st.chatgptBlocked = chat.blocked;
         st.chatgptCode = chat.code;
         st.dns = chat.dns;
         st.tls = chat.tls;
         st.http = chat.http;
-        st.geminiTested = gemini != null;
-        st.geminiOk = gemini != null && gemini.ok;
         st.testedAt = System.currentTimeMillis();
 
         List<String> failures = new ArrayList<>();
         if (!chat.ok) failures.add(chat.blocked ? "ChatGPT: региональная блокировка" : "ChatGPT: " + shortError(chat));
-        if (gemini != null && !gemini.ok) failures.add("Gemini: " + shortError(gemini));
+        if (!auth.ok) failures.add("OpenAI Auth TLS: " + shortError(auth));
         st.error = joinFailures(failures);
     }
 
@@ -492,12 +470,13 @@ final class SmartDnsManager {
         ProbeResult pr = new ProbeResult();
         long d0 = System.nanoTime();
         SSLSocket ssl = null;
+        Socket raw = null;
         try {
             List<InetAddress> addresses = resolve(r, host);
             pr.dns = ms(d0);
 
             long t0 = System.nanoTime();
-            Socket raw = connectAddresses(addresses, 443, 4500);
+            raw = connectAddresses(addresses, 443, 4500);
             ssl = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault()).createSocket(raw, host, 443, true);
             SSLParameters p = ssl.getSSLParameters();
             p.setEndpointIdentificationAlgorithm("HTTPS");
@@ -520,44 +499,61 @@ final class SmartDnsManager {
             HttpProbe hp = readHttp(ssl.getInputStream());
             pr.http = ms(h0);
             pr.code = hp.code;
-            String body = hp.body.toLowerCase(Locale.ROOT);
-            pr.blocked = detectRegionBlock && (hp.code == 451
-                    || body.contains("unable to load site")
-                    || body.contains("if you are using a vpn")
-                    || body.contains("unsupported_country")
-                    || body.contains("country is not supported")
-                    || body.contains("not available in your country")
-                    || body.contains("access denied due to region"));
-            pr.ok = !pr.blocked && hp.code >= 200 && hp.code < 500;
-            if (!pr.ok && !pr.blocked) pr.error = "HTTP " + hp.code;
+            String body = hp.body;
+            pr.blocked = ChatGptRoutePolicy.isRegionBlocked(hp.code, body);
+            pr.ok = ChatGptRoutePolicy.isSessionResponse(hp.code, body);
+            if (!pr.ok && !pr.blocked) pr.error = hp.code == 200
+                    ? "Ответ не является JSON сессии ChatGPT" : "HTTP " + hp.code;
         } catch (Exception e) {
             pr.ok = false;
             pr.error = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
         } finally {
             if (pr.dns < 0) pr.dns = ms(d0);
             if (ssl != null) try { ssl.close(); } catch (Exception ignored) {}
+            else if (raw != null) try { raw.close(); } catch (Exception ignored) {}
         }
         return pr;
     }
 
     private static HttpProbe readHttp(InputStream in) throws Exception {
-        BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.ISO_8859_1));
-        String first = r.readLine();
-        if (first == null || !first.startsWith("HTTP/")) throw new IOException("HTTP probe");
-        String[] p = first.split("\\s+");
-        int code = p.length > 1 ? Integer.parseInt(p[1]) : 0;
-        String line;
-        while ((line = r.readLine()) != null && !line.isEmpty()) {}
-        StringBuilder b = new StringBuilder();
-        char[] buf = new char[2048];
-        int n;
-        while (b.length() < 49152 && (n = r.read(buf)) != -1) b.append(buf, 0, Math.min(n, 49152 - b.length()));
-        return new HttpProbe(code, b.toString());
+        ChatGptRoutePolicy.HttpResponse response = ChatGptRoutePolicy.readResponse(in);
+        return new HttpProbe(response.code, response.body);
+    }
+
+    private static ProbeResult probeTls(Resolver r, String host) {
+        ProbeResult result = new ProbeResult();
+        try {
+            if (!r.matches(host)) throw new IOException("Домен отсутствует в маршруте");
+            List<InetAddress> addresses = resolve(r, host);
+            try (Socket raw = connectAddresses(addresses, 443, 4500);
+                 SSLSocket tls = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault())
+                         .createSocket(raw, host, 443, true)) {
+                SSLParameters parameters = tls.getSSLParameters();
+                parameters.setEndpointIdentificationAlgorithm("HTTPS");
+                parameters.setServerNames(Collections.singletonList(new SNIHostName(host)));
+                tls.setSSLParameters(parameters);
+                tls.setSoTimeout(6000);
+                tls.startHandshake();
+                result.ok = true;
+            }
+        } catch (Exception e) {
+            result.error = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        }
+        return result;
+    }
+
+    private static boolean healthy(Resolver r) {
+        Stats s = STATS.get(r.id);
+        return s != null && s.testedAt > 0 && s.chatgptOk;
+    }
+
+    static boolean hasHealthyRoute() {
+        return !ranked(CHATGPT_HOST).isEmpty();
     }
 
     private static List<Resolver> ranked(String host) {
         List<Resolver> x = new ArrayList<>();
-        for (Resolver r : resolvers) if (r.matches(host) && routeEnabled(r.id)) x.add(r);
+        for (Resolver r : resolvers) if (r.matches(host) && routeEnabled(r.id) && healthy(r)) x.add(r);
         x.sort((a, b) -> {
             int c = Double.compare(scoreForHost(b, host), scoreForHost(a, host));
             return c != 0 ? c : Integer.compare(a.priority, b.priority);
@@ -571,7 +567,7 @@ final class SmartDnsManager {
     }
 
     private static Resolver choose(List<Resolver> x, long now, String host) {
-        if (x.isEmpty()) return null;
+        if (x.isEmpty()) { selectedId = ""; selectedUntil = 0; return null; }
         if (!isAuto()) {
             Resolver manual = find(prefs().getString(MANUAL, ""));
             if (manual != null && x.contains(manual) && scoreForHost(manual, host) > -999) {
@@ -598,17 +594,10 @@ final class SmartDnsManager {
 
         double latency = Math.max(0, s.dns) + Math.max(0, s.tls) + Math.max(0, s.http);
         double value = Math.max(1, 100 - Math.min(85, latency / 35.0));
-        if (s.geminiTested) value += s.geminiOk ? 8 : -16;
         return value;
     }
 
-    private static double scoreForHost(Resolver r, String host) {
-        Stats s = STATS.get(r.id);
-        double base = score(r);
-        if (s == null || s.testedAt == 0) return base;
-        if (isGeminiHost(host) && s.geminiTested) return s.geminiOk ? base + 20 : -930;
-        return base;
-    }
+    private static double scoreForHost(Resolver r, String host) { return score(r); }
 
     private static Resolver find(String id) {
         if (id == null) return null;
@@ -629,18 +618,6 @@ final class SmartDnsManager {
         DNS_CACHE.clear();
     }
 
-    private static boolean isGeminiHost(String host) {
-        String h = host.toLowerCase(Locale.ROOT);
-        return h.equals("gemini.google.com")
-                || h.endsWith(".gemini.google.com")
-                || h.equals("generativelanguage.googleapis.com")
-                || h.equals("aistudio.google.com")
-                || h.equals("ai.google.dev")
-                || h.equals("daily-cloudcode-pa.googleapis.com")
-                || h.equals("cloudcode-pa.googleapis.com")
-                || h.equals("geminiweb-pa.clients6.google.com");
-    }
-
     private static List<InetAddress> resolve(Resolver r, String host) throws Exception {
         String key = r.id + "|" + host.toLowerCase(Locale.ROOT);
         DnsCache cached = DNS_CACHE.get(key);
@@ -648,13 +625,13 @@ final class SmartDnsManager {
         if (cached != null && now - cached.at < DNS_TTL) return cached.addresses;
 
         List<InetAddress> out = new ArrayList<>();
-        if ("DoH".equals(r.mode)) {
-            out.addAll(doh(r.endpoint, host, 1));
-            out.addAll(doh(r.endpoint, host, 28));
-        } else {
-            out.addAll(dot(r.endpoint, host, 1));
-            out.addAll(dot(r.endpoint, host, 28));
+        Exception last = null;
+        for (int type : new int[]{1, 28}) {
+            try {
+                out.addAll("DoH".equals(r.mode) ? doh(r.endpoint, host, type) : dot(r.endpoint, host, type));
+            } catch (Exception e) { last = e; }
         }
+        if (out.isEmpty() && last != null) throw last;
 
         LinkedHashMap<String, InetAddress> unique = new LinkedHashMap<>();
         for (InetAddress a : out) unique.put(a.getHostAddress(), a);
@@ -667,49 +644,57 @@ final class SmartDnsManager {
     private static List<InetAddress> doh(String endpoint, String host, int type) throws Exception {
         byte[] q = query(host, type);
         HttpsURLConnection h = (HttpsURLConnection) new URL(endpoint).openConnection(Proxy.NO_PROXY);
-        h.setRequestMethod("POST");
-        h.setConnectTimeout(5000);
-        h.setReadTimeout(5000);
-        h.setDoOutput(true);
-        h.setFixedLengthStreamingMode(q.length);
-        h.setRequestProperty("Content-Type", "application/dns-message");
-        h.setRequestProperty("Accept", "application/dns-message");
-        h.setRequestProperty("Accept-Encoding", "identity");
-        try (OutputStream o = h.getOutputStream()) { o.write(q); }
-        if (h.getResponseCode() != 200) throw new IOException("DoH HTTP " + h.getResponseCode());
-        byte[] b = readLimited(h.getInputStream(), 65536);
-        h.disconnect();
-        return parseDns(b, type);
+        try {
+            h.setRequestMethod("POST");
+            h.setConnectTimeout(5000);
+            h.setReadTimeout(5000);
+            h.setDoOutput(true);
+            h.setFixedLengthStreamingMode(q.length);
+            h.setRequestProperty("Content-Type", "application/dns-message");
+            h.setRequestProperty("Accept", "application/dns-message");
+            h.setRequestProperty("Accept-Encoding", "identity");
+            try (OutputStream o = h.getOutputStream()) { o.write(q); }
+            if (h.getResponseCode() != 200) throw new IOException("DoH HTTP " + h.getResponseCode());
+            byte[] response = readLimited(h.getInputStream(), 65536);
+            validateDnsResponse(q, response);
+            return parseDns(response, type);
+        } finally { h.disconnect(); }
     }
 
     private static List<InetAddress> dot(String endpoint, String host, int type) throws Exception {
         URI u = URI.create(endpoint);
         String dnsHost = u.getHost();
         int port = u.getPort() > 0 ? u.getPort() : 853;
-        Socket raw = new Socket();
-        raw.connect(new InetSocketAddress(dnsHost, port), 5000);
-        raw.setSoTimeout(5000);
+        try (Socket raw = new Socket()) {
+            raw.connect(new InetSocketAddress(dnsHost, port), 5000);
+            raw.setSoTimeout(5000);
+            try (SSLSocket tls = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault())
+                    .createSocket(raw, dnsHost, port, true)) {
+                SSLParameters parameters = tls.getSSLParameters();
+                parameters.setEndpointIdentificationAlgorithm("HTTPS");
+                parameters.setServerNames(Collections.singletonList(new SNIHostName(dnsHost)));
+                tls.setSSLParameters(parameters);
+                tls.startHandshake();
+                byte[] q = query(host, type);
+                DataOutputStream out = new DataOutputStream(tls.getOutputStream());
+                out.writeShort(q.length);
+                out.write(q);
+                out.flush();
+                DataInputStream in = new DataInputStream(new BufferedInputStream(tls.getInputStream()));
+                int n = in.readUnsignedShort();
+                if (n <= 0 || n > 65535) throw new IOException("DoT length");
+                byte[] response = new byte[n];
+                in.readFully(response);
+                validateDnsResponse(q, response);
+                return parseDns(response, type);
+            }
+        }
+    }
 
-        SSLSocket s = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault()).createSocket(raw, dnsHost, port, true);
-        SSLParameters p = s.getSSLParameters();
-        p.setEndpointIdentificationAlgorithm("HTTPS");
-        p.setServerNames(Collections.singletonList(new SNIHostName(dnsHost)));
-        s.setSSLParameters(p);
-        s.startHandshake();
-
-        byte[] q = query(host, type);
-        DataOutputStream o = new DataOutputStream(s.getOutputStream());
-        o.writeShort(q.length);
-        o.write(q);
-        o.flush();
-
-        DataInputStream i = new DataInputStream(new BufferedInputStream(s.getInputStream()));
-        int n = i.readUnsignedShort();
-        if (n <= 0 || n > 65535) throw new IOException("DoT length");
-        byte[] b = new byte[n];
-        i.readFully(b);
-        s.close();
-        return parseDns(b, type);
+    private static void validateDnsResponse(byte[] query, byte[] response) throws IOException {
+        if (response.length < 12 || response[0] != query[0] || response[1] != query[1]
+                || (response[2] & 0x80) == 0) throw new IOException("Invalid DNS response");
+        if ((response[3] & 15) != 0) throw new IOException("DNS RCODE " + (response[3] & 15));
     }
 
     private static byte[] query(String host, int type) throws Exception {
@@ -775,10 +760,13 @@ final class SmartDnsManager {
 
     private static Socket connectAddresses(List<InetAddress> addresses, int port, int timeoutMs) throws Exception {
         Exception last = null;
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         for (InetAddress ip : addresses) {
+            long remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+            if (remaining <= 0) break;
             Socket s = new Socket();
             try {
-                s.connect(new InetSocketAddress(ip, port), timeoutMs);
+                s.connect(new InetSocketAddress(ip, port), (int) Math.max(1, remaining));
                 s.setSoTimeout(45000);
                 return s;
             } catch (Exception e) {
@@ -829,3 +817,4 @@ final class SmartDnsManager {
         return b.toString();
     }
 }
+

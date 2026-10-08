@@ -75,7 +75,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Persistent app-scoped loopback HTTP CONNECT gateway for user-enabled Smart DNS routing of GPT Drive, ChatGPT, Gemini and identity-provider traffic."/>
+                android:value="Persistent app-scoped loopback HTTP CONNECT gateway for user-enabled Smart DNS routing of GPT Drive ChatGPT/OpenAI traffic."/>
         </service>
 
         <receiver
@@ -100,3 +100,4 @@
         </provider>
     </application>
 </manifest>
+
