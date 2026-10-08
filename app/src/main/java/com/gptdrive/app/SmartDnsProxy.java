@@ -36,6 +36,7 @@ final class SmartDnsProxy {
 
     static Proxy proxy(Context context) {
         SmartDnsManager.initialize(context);
+        GoogleFullRouter.initialize(context);
         if (!SmartDnsManager.isEnabled()) return Proxy.NO_PROXY;
         try {
             ensureStarted(context.getApplicationContext());
@@ -47,10 +48,11 @@ final class SmartDnsProxy {
 
     static String webViewStatus() { return webViewStatus; }
 
-    /** Applies Smart DNS to all WebViews without creating a second Android VPN. */
+    /** Applies app-scoped Smart Routing to all WebViews without creating a second Android VPN. */
     static void applyWebViewRouting(Context context, Runnable done) {
         Context c = context.getApplicationContext();
         SmartDnsManager.initialize(c);
+        GoogleFullRouter.initialize(c);
         Runnable callback = done == null ? () -> {} : done;
         MAIN.execute(() -> {
             try {
@@ -72,7 +74,7 @@ final class SmartDnsProxy {
                         .addProxyRule("127.0.0.1:" + port)
                         .build();
                 controller.setProxyOverride(config, MAIN, () -> {
-                    webViewStatus = "WebView: Smart DNS · 127.0.0.1:" + port;
+                    webViewStatus = "WebView: Smart Routing · 127.0.0.1:" + port;
                     callback.run();
                 });
             } catch (Throwable e) {
@@ -87,12 +89,13 @@ final class SmartDnsProxy {
         synchronized (LOCK) {
             if (server != null && !server.isClosed()) return;
             app = context;
+            GoogleFullRouter.initialize(context);
             ServerSocket s = new ServerSocket();
             s.setReuseAddress(true);
             s.bind(new InetSocketAddress("127.0.0.1", 0), 32);
             server = s;
             port = s.getLocalPort();
-            Thread t = new Thread(SmartDnsProxy::acceptLoop, "gptdrive-smartdns-proxy");
+            Thread t = new Thread(SmartDnsProxy::acceptLoop, "gptdrive-smart-routing-proxy");
             t.setDaemon(true);
             t.start();
         }
@@ -122,11 +125,20 @@ final class SmartDnsProxy {
                 return;
             }
             HostPort hp = parseTarget(parts[1]);
-            upstream = SmartDnsManager.connect(app, hp.host, hp.port);
+
+            // Official Google never goes through the generic AI Smart DNS pool.
+            // Gemini / AI Studio are explicitly excluded by GoogleFullRouter and
+            // continue through SmartDnsManager (GeoHide/Astracat/etc.).
+            if (GoogleFullRouter.isGoogleFullHost(hp.host)) {
+                upstream = GoogleFullRouter.connect(app, hp.host, hp.port);
+            } else {
+                upstream = SmartDnsManager.connect(app, hp.host, hp.port);
+            }
+
             upstream.setSoTimeout(0);
             client.setSoTimeout(0);
             OutputStream co = client.getOutputStream();
-            co.write("HTTP/1.1 200 Connection Established\r\nProxy-Agent: GPTDrive-SmartDNS/2\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            co.write("HTTP/1.1 200 Connection Established\r\nProxy-Agent: GPTDrive-SmartRouting/3\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
             co.flush();
             final Socket u = upstream;
             IO.execute(() -> pump(client, u));
