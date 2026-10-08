@@ -2,16 +2,23 @@ package com.gptdrive.app;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.os.Build;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
@@ -37,6 +44,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
@@ -45,27 +53,29 @@ import javax.net.ssl.SSLSocketFactory;
 /**
  * Dedicated route for official Google traffic.
  *
- * This is deliberately separated from the generic AI Smart DNS pool. Gemini
- * and Google AI hosts stay on SmartDnsManager, while Google account / One /
- * Play / payments / general Google hosts use only routes from the dedicated
- * Google Full registry. If every Google Full route fails, traffic falls back
- * to System DNS; it is never handed to GeoHide/Astracat/etc.
+ * Generic AI Smart DNS remains responsible for ChatGPT/Gemini. Official
+ * Google hosts are routed only through this class. The route order is dynamic:
+ * a working system/VPN path is preferred when Android already has a VPN,
+ * otherwise working encrypted Google Full resolvers (DoH/DoT) are preferred,
+ * with plain UDP/53 kept only as a last compatibility option. If every route
+ * fails, the final fallback is System DNS and never GeoHide/Astracat/etc.
  */
 final class GoogleFullRouter {
     static final String REGISTRY_URL =
             "https://raw.githubusercontent.com/mallstorm/OmniChat-DNS-Registry/main/google-full-routes.json";
 
-    private static final String PREFS = "gptdrive_google_full_v1";
+    private static final String PREFS = "gptdrive_google_full_v2";
     private static final String ENABLED = "enabled";
     private static final String DISABLED = "disabled_routes";
     private static final String CACHE = "registry_cache";
     private static final String UPDATED = "registry_updated";
+    private static final String SYSTEM_ID = "builtin:system-vpn";
 
     private static final long REFRESH = 6L * 60L * 60L * 1000L;
     private static final long DNS_TTL = 60_000L;
 
     private static final ExecutorService WORK = Executors.newCachedThreadPool();
-    private static final ExecutorService PROBES = Executors.newFixedThreadPool(2);
+    private static final ExecutorService PROBES = Executors.newFixedThreadPool(3);
     private static final SecureRandom RAND = new SecureRandom();
     private static final ConcurrentHashMap<String, Stats> STATS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, DnsCache> DNS_CACHE = new ConcurrentHashMap<>();
@@ -78,7 +88,7 @@ final class GoogleFullRouter {
 
     static final class RouteView {
         final String id, name, protocol, endpoint, error, sourceUrl;
-        final boolean selected, enabled, ok;
+        final boolean selected, enabled, ok, locked, vpnActive;
         final long testedAt, dnsMs, tlsMs, httpMs;
         final int statusCode;
         final double score;
@@ -87,11 +97,13 @@ final class GoogleFullRouter {
             id = r.id;
             name = r.name;
             protocol = r.protocol;
-            endpoint = r.host + ":" + r.port;
+            endpoint = displayEndpoint(r);
             sourceUrl = r.sourceUrl;
             selected = sel;
             enabled = en;
             score = sc;
+            locked = r.isSystem();
+            vpnActive = locked && isVpnActive();
             ok = s != null && s.testedAt > 0 && s.ok;
             testedAt = s == null ? 0 : s.testedAt;
             dnsMs = s == null ? -1 : s.dnsMs;
@@ -103,23 +115,28 @@ final class GoogleFullRouter {
     }
 
     private static final class Route {
-        final String id, name, protocol, host, sourceUrl;
+        final String id, name, protocol, host, endpoint, bootstrapIp, sourceUrl;
         final int port, priority;
         final List<String> domains;
 
-        Route(String i, String n, String proto, String h, int p, int pri,
-              List<String> d, String src) {
+        Route(String i, String n, String proto, String h, String ep, String bootstrap,
+              int p, int pri, List<String> d, String src) {
             id = i;
             name = n;
             protocol = proto;
             host = h;
+            endpoint = ep;
+            bootstrapIp = bootstrap;
             port = p;
             priority = pri;
             domains = d;
             sourceUrl = src;
         }
 
+        boolean isSystem() { return "system".equals(protocol); }
+
         boolean matches(String hostName) {
+            if (domains.isEmpty()) return true;
             String h = hostName.toLowerCase(Locale.ROOT);
             for (String d : domains) {
                 String x = d.toLowerCase(Locale.ROOT).trim().replaceFirst("^\\*?\\.", "");
@@ -161,6 +178,7 @@ final class GoogleFullRouter {
         synchronized (GoogleFullRouter.class) {
             if (initialized) return;
             app = context.getApplicationContext();
+            routes = withSystem(Collections.emptyList());
             String cached = prefs().getString(CACHE, "");
             if (!cached.isEmpty()) install(cached);
             initialized = true;
@@ -199,14 +217,18 @@ final class GoogleFullRouter {
                 || h.equals("myaccount.google.com")
                 || h.equals("one.google.com")
                 || h.equals("payments.google.com")
+                || h.equals("pay.google.com")
                 || h.equals("play.google.com")
                 || h.equals("play.googleapis.com")
                 || h.equals("oauth2.googleapis.com")
+                || h.equals("oauthaccountmanager.googleapis.com")
                 || h.equals("apis.google.com")
                 || h.equals("accounts.youtube.com")
                 || h.equals("android.clients.google.com")
                 || h.equals("android.apis.google.com")
                 || h.equals("www.google.com")
+                || h.equals("googledrive.com")
+                || h.endsWith(".googledrive.com")
                 || h.endsWith(".google.com")
                 || h.endsWith(".googleapis.com")
                 || h.endsWith(".googleusercontent.com")
@@ -230,12 +252,11 @@ final class GoogleFullRouter {
         if (!isEnabled() || !isGoogleFullHost(host)) return systemConnect(host, port);
         refreshIfStale();
 
-        List<Route> candidates = ranked(host);
         Exception last = null;
-        for (Route r : candidates) {
+        for (Route r : ranked(host)) {
             try {
                 List<InetAddress> addresses = resolve(r, host);
-                Socket s = connectAddresses(addresses, port, 5500);
+                Socket s = connectAddresses(addresses, port, 5200);
                 selectedId = r.id;
                 return s;
             } catch (Exception e) {
@@ -243,8 +264,8 @@ final class GoogleFullRouter {
             }
         }
 
-        // Important: fallback is System DNS, never the generic Smart DNS pool.
         try {
+            selectedId = SYSTEM_ID;
             return systemConnect(host, port);
         } catch (Exception e) {
             if (last != null) throw last;
@@ -290,6 +311,7 @@ final class GoogleFullRouter {
 
     static void setRouteEnabled(Context context, String id, boolean on) {
         initialize(context);
+        if (SYSTEM_ID.equals(id)) return;
         Set<String> d = disabled();
         if (on) d.remove(id); else d.add(id);
         prefs().edit().putStringSet(DISABLED, d).apply();
@@ -300,18 +322,19 @@ final class GoogleFullRouter {
     static String summary() {
         if (!isEnabled()) return "Google Full выключен";
         List<Route> x = ranked("accounts.google.com");
-        if (x.isEmpty()) return "Google Full · нет маршрута";
+        if (x.isEmpty()) return "Google Full · System DNS";
         Route r = find(selectedId);
         if (r == null || !routeEnabled(r.id)) r = x.get(0);
         Stats s = STATS.get(r.id);
         String state = s == null || s.testedAt == 0 ? "не проверен" : (s.ok ? "✓" : "×");
         String latency = s != null && s.dnsMs >= 0 ? " · DNS " + s.dnsMs + " ms" : "";
-        return "Google Full · " + r.name + " · " + state + latency;
+        String vpn = r.isSystem() && isVpnActive() ? " · VPN" : "";
+        return "Google Full · " + r.name + " · " + state + latency + vpn;
     }
 
     private static void refreshIfStale() {
         if (app == null) return;
-        if (System.currentTimeMillis() - lastUpdated() > REFRESH || routes.isEmpty()) {
+        if (System.currentTimeMillis() - lastUpdated() > REFRESH || routes.size() <= 1) {
             refreshRemote();
         }
     }
@@ -323,17 +346,19 @@ final class GoogleFullRouter {
             h.setConnectTimeout(8000);
             h.setReadTimeout(10000);
             h.setRequestProperty("Accept", "application/json");
-            h.setRequestProperty("User-Agent", "GPTDrive-GoogleFull/1");
+            h.setRequestProperty("User-Agent", "GPTDrive-GoogleFull/2");
             if (h.getResponseCode() != 200) throw new IOException("Registry HTTP " + h.getResponseCode());
             String text = new String(readLimited(h.getInputStream(), 256 * 1024), StandardCharsets.UTF_8);
             List<Route> parsed = parse(text);
-            if (parsed.isEmpty()) throw new IOException("В Google Full Registry нет маршрутов");
-            routes = parsed;
-            prefs().edit().putString(CACHE, text).putLong(UPDATED, System.currentTimeMillis()).apply();
+            if (parsed.isEmpty()) throw new IOException("В Google Full Registry нет удалённых маршрутов");
+            routes = withSystem(parsed);
+            prefs().edit().putString(CACHE, text)
+                    .putLong(UPDATED, System.currentTimeMillis()).apply();
             registryError = "";
             DNS_CACHE.clear();
         } catch (Exception e) {
             registryError = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            if (routes.isEmpty()) routes = withSystem(Collections.emptyList());
         } finally {
             if (h != null) h.disconnect();
         }
@@ -341,29 +366,66 @@ final class GoogleFullRouter {
 
     private static void install(String text) {
         try {
-            List<Route> p = parse(text);
-            if (!p.isEmpty()) routes = p;
-        } catch (Exception ignored) {}
+            routes = withSystem(parse(text));
+        } catch (Exception ignored) {
+            routes = withSystem(Collections.emptyList());
+        }
+    }
+
+    private static List<Route> withSystem(List<Route> remote) {
+        List<Route> out = new ArrayList<>();
+        out.add(systemRoute());
+        if (remote != null) {
+            for (Route r : remote) if (!SYSTEM_ID.equals(r.id)) out.add(r);
+        }
+        out.sort(Comparator.comparingInt(r -> r.priority));
+        return out;
+    }
+
+    private static Route systemRoute() {
+        return new Route(
+                SYSTEM_ID,
+                "System / текущий VPN",
+                "system",
+                "",
+                "",
+                "",
+                0,
+                5,
+                defaultDomains(),
+                "android://active-network");
     }
 
     private static List<Route> parse(String text) throws Exception {
         JSONObject root = new JSONObject(text);
-        if (root.optInt("version", 1) != 1) throw new IllegalArgumentException("Google Full Registry version");
+        if (root.optInt("version", 1) != 1) {
+            throw new IllegalArgumentException("Google Full Registry version");
+        }
         JSONArray a = root.optJSONArray("routes");
         List<Route> out = new ArrayList<>();
         if (a == null) return out;
+
         for (int i = 0; i < a.length(); i++) {
             JSONObject o = a.optJSONObject(i);
             if (o == null || !o.optBoolean("enabled", true)) continue;
             String proto = o.optString("protocol", "").trim().toLowerCase(Locale.ROOT);
-            if (!"udp53".equals(proto)) continue;
-            String host = o.optString("host", "").trim();
-            if (host.isEmpty()) continue;
-            int port = o.optInt("port", 53);
+            if (!"doh".equals(proto) && !"dot".equals(proto) && !"udp53".equals(proto)) continue;
+
+            String id = o.optString("id", "google-full-" + i).trim();
+            String name = o.optString("name", id).trim();
             int priority = o.optInt("priority", 100);
-            String id = o.optString("id", "google-full-" + i);
-            String name = o.optString("name", id);
-            String source = o.optString("source_url", "");
+            String source = o.optString("source_url", "").trim();
+            String host = o.optString("host", "").trim();
+            String endpoint = o.optString("endpoint", "").trim();
+            String bootstrap = o.optString("bootstrap_ip", "").trim();
+            int port = o.optInt("port", "dot".equals(proto) ? 853 : 53);
+
+            if ("doh".equals(proto)) {
+                if (!endpoint.startsWith("https://")) continue;
+            } else if (host.isEmpty()) {
+                continue;
+            }
+
             List<String> domains = new ArrayList<>();
             JSONArray ds = o.optJSONArray("domains");
             if (ds != null) {
@@ -372,16 +434,23 @@ final class GoogleFullRouter {
                     if (!d.isEmpty()) domains.add(d);
                 }
             }
-            if (domains.isEmpty()) {
-                domains.add("google.com");
-                domains.add("googleapis.com");
-                domains.add("gstatic.com");
-                domains.add("googleusercontent.com");
-            }
-            out.add(new Route(id, name, proto, host, port, priority, domains, source));
+            if (domains.isEmpty()) domains.addAll(defaultDomains());
+
+            out.add(new Route(id, name, proto, host, endpoint, bootstrap,
+                    port, priority, domains, source));
         }
         out.sort(Comparator.comparingInt(r -> r.priority));
         return out;
+    }
+
+    private static List<String> defaultDomains() {
+        return new ArrayList<>(Arrays.asList(
+                "google.com",
+                "googleapis.com",
+                "gstatic.com",
+                "googleusercontent.com",
+                "google.com.ua",
+                "googledrive.com"));
     }
 
     private static void sweep(boolean force) {
@@ -391,10 +460,10 @@ final class GoogleFullRouter {
             if (force || routeEnabled(r.id)) futures.add(PROBES.submit(() -> probe(r)));
         }
         for (Future<?> f : futures) {
-            try { f.get(35, TimeUnit.SECONDS); } catch (Exception ignored) {}
+            try { f.get(32, TimeUnit.SECONDS); } catch (Exception ignored) {}
         }
         List<Route> x = ranked("accounts.google.com");
-        selectedId = x.isEmpty() ? "" : x.get(0).id;
+        selectedId = x.isEmpty() ? SYSTEM_ID : x.get(0).id;
     }
 
     private static void probe(Route r) {
@@ -424,15 +493,16 @@ final class GoogleFullRouter {
         try {
             List<InetAddress> addresses = resolve(r, host);
             p.dnsMs = ms(d0);
+
             long t0 = System.nanoTime();
-            Socket raw = connectAddresses(addresses, 443, 5000);
+            Socket raw = connectAddresses(addresses, 443, 4800);
             ssl = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault())
                     .createSocket(raw, host, 443, true);
             SSLParameters params = ssl.getSSLParameters();
             params.setEndpointIdentificationAlgorithm("HTTPS");
             params.setServerNames(Collections.singletonList(new SNIHostName(host)));
             ssl.setSSLParameters(params);
-            ssl.setSoTimeout(7000);
+            ssl.setSoTimeout(6500);
             ssl.startHandshake();
             p.tlsMs = ms(t0);
 
@@ -442,10 +512,13 @@ final class GoogleFullRouter {
                     + "Connection: close\r\n"
                     + "Accept: text/html,*/*\r\n"
                     + "Accept-Encoding: identity\r\n"
-                    + "User-Agent: Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/150.0 Mobile Safari/537.36\r\n\r\n";
+                    + "User-Agent: Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
+                    + "Chrome/150.0 Mobile Safari/537.36\r\n\r\n";
             ssl.getOutputStream().write(req.getBytes(StandardCharsets.US_ASCII));
             ssl.getOutputStream().flush();
-            BufferedReader br = new BufferedReader(new InputStreamReader(ssl.getInputStream(), StandardCharsets.ISO_8859_1));
+
+            BufferedReader br = new BufferedReader(new InputStreamReader(
+                    ssl.getInputStream(), StandardCharsets.ISO_8859_1));
             String first = br.readLine();
             if (first == null || !first.startsWith("HTTP/")) throw new IOException("HTTP probe");
             String[] parts = first.split("\\s+");
@@ -476,9 +549,22 @@ final class GoogleFullRouter {
     private static double score(Route r) {
         Stats s = STATS.get(r.id);
         if (s != null && s.testedAt > 0 && !s.ok) return -1000;
-        if (s == null || s.testedAt == 0) return 50 + (1000 - Math.min(1000, r.priority)) / 500.0;
-        double latency = Math.max(0, s.dnsMs) + Math.max(0, s.tlsMs) + Math.max(0, s.httpMs);
-        return Math.max(1, 100 - Math.min(90, latency / 35.0));
+
+        double value;
+        if (s == null || s.testedAt == 0) {
+            value = 50 + (1000 - Math.min(1000, r.priority)) / 500.0;
+        } else {
+            double latency = Math.max(0, s.dnsMs)
+                    + Math.max(0, s.tlsMs)
+                    + Math.max(0, s.httpMs);
+            value = Math.max(1, 100 - Math.min(90, latency / 35.0));
+        }
+
+        if (r.isSystem()) value += isVpnActive() ? 25 : -32;
+        else if ("doh".equals(r.protocol)) value += 6;
+        else if ("dot".equals(r.protocol)) value += 4;
+        else if ("udp53".equals(r.protocol)) value -= 6;
+        return value;
     }
 
     private static Route find(String id) {
@@ -487,7 +573,9 @@ final class GoogleFullRouter {
         return null;
     }
 
-    private static boolean routeEnabled(String id) { return !disabled().contains(id); }
+    private static boolean routeEnabled(String id) {
+        return SYSTEM_ID.equals(id) || !disabled().contains(id);
+    }
 
     private static Set<String> disabled() {
         Set<String> s = prefs().getStringSet(DISABLED, Collections.emptySet());
@@ -500,8 +588,24 @@ final class GoogleFullRouter {
         long now = System.currentTimeMillis();
         if (cached != null && now - cached.at < DNS_TTL) return cached.addresses;
 
-        // A-only on purpose: the Google Full exit is validated on its EU IPv4 path.
-        List<InetAddress> addresses = udpDns(route.host, route.port, host, 1);
+        List<InetAddress> addresses;
+        switch (route.protocol) {
+            case "system":
+                addresses = Arrays.asList(InetAddress.getAllByName(host));
+                break;
+            case "doh":
+                addresses = doh(route.endpoint, host, 1);
+                break;
+            case "dot":
+                addresses = dot(route, host, 1);
+                break;
+            case "udp53":
+                addresses = udpDns(route.host, route.port, host, 1);
+                break;
+            default:
+                throw new IOException("Unsupported Google Full protocol: " + route.protocol);
+        }
+
         LinkedHashMap<String, InetAddress> unique = new LinkedHashMap<>();
         for (InetAddress a : addresses) unique.put(a.getHostAddress(), a);
         List<InetAddress> out = new ArrayList<>(unique.values());
@@ -510,14 +614,69 @@ final class GoogleFullRouter {
         return out;
     }
 
-    private static List<InetAddress> udpDns(String dnsHost, int port, String host, int type) throws Exception {
+    private static List<InetAddress> doh(String endpoint, String host, int type) throws Exception {
+        byte[] q = query(host, type);
+        HttpsURLConnection h = (HttpsURLConnection) new URL(endpoint).openConnection(Proxy.NO_PROXY);
+        h.setRequestMethod("POST");
+        h.setConnectTimeout(4200);
+        h.setReadTimeout(4200);
+        h.setDoOutput(true);
+        h.setFixedLengthStreamingMode(q.length);
+        h.setRequestProperty("Content-Type", "application/dns-message");
+        h.setRequestProperty("Accept", "application/dns-message");
+        h.setRequestProperty("Accept-Encoding", "identity");
+        try (OutputStream o = h.getOutputStream()) { o.write(q); }
+        if (h.getResponseCode() != 200) {
+            int code = h.getResponseCode();
+            h.disconnect();
+            throw new IOException("DoH HTTP " + code);
+        }
+        byte[] data = readLimited(h.getInputStream(), 65536);
+        h.disconnect();
+        return parseDns(data, type);
+    }
+
+    private static List<InetAddress> dot(Route route, String host, int type) throws Exception {
+        String connectHost = route.bootstrapIp.isEmpty() ? route.host : route.bootstrapIp;
+        Socket raw = new Socket();
+        raw.connect(new InetSocketAddress(connectHost, route.port), 4200);
+        raw.setSoTimeout(4200);
+
+        SSLSocket ssl = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault())
+                .createSocket(raw, route.host, route.port, true);
+        SSLParameters params = ssl.getSSLParameters();
+        params.setEndpointIdentificationAlgorithm("HTTPS");
+        params.setServerNames(Collections.singletonList(new SNIHostName(route.host)));
+        if (Build.VERSION.SDK_INT >= 29) {
+            try { params.setApplicationProtocols(new String[]{"dot"}); } catch (Throwable ignored) {}
+        }
+        ssl.setSSLParameters(params);
+        ssl.startHandshake();
+
+        byte[] q = query(host, type);
+        DataOutputStream out = new DataOutputStream(ssl.getOutputStream());
+        out.writeShort(q.length);
+        out.write(q);
+        out.flush();
+
+        DataInputStream in = new DataInputStream(new BufferedInputStream(ssl.getInputStream()));
+        int n = in.readUnsignedShort();
+        if (n <= 0 || n > 65535) throw new IOException("DoT length");
+        byte[] data = new byte[n];
+        in.readFully(data);
+        ssl.close();
+        return parseDns(data, type);
+    }
+
+    private static List<InetAddress> udpDns(String dnsHost, int port, String host, int type)
+            throws Exception {
         byte[] q = query(host, type);
         InetAddress server = InetAddress.getByName(dnsHost);
         byte[] buf = new byte[65535];
         DatagramPacket request = new DatagramPacket(q, q.length, server, port);
         DatagramPacket response = new DatagramPacket(buf, buf.length);
         try (DatagramSocket socket = new DatagramSocket()) {
-            socket.setSoTimeout(4500);
+            socket.setSoTimeout(3000);
             socket.send(request);
             socket.receive(response);
         }
@@ -580,9 +739,12 @@ final class GoogleFullRouter {
         throw new IOException("DNS name");
     }
 
-    private static int u16(byte[] d, int p) { return ((d[p] & 255) << 8) | (d[p + 1] & 255); }
+    private static int u16(byte[] d, int p) {
+        return ((d[p] & 255) << 8) | (d[p + 1] & 255);
+    }
 
-    private static Socket connectAddresses(List<InetAddress> addresses, int port, int timeoutMs) throws Exception {
+    private static Socket connectAddresses(List<InetAddress> addresses, int port, int timeoutMs)
+            throws Exception {
         Exception last = null;
         for (InetAddress ip : addresses) {
             Socket s = new Socket();
@@ -602,7 +764,32 @@ final class GoogleFullRouter {
         return connectAddresses(Arrays.asList(InetAddress.getAllByName(host)), port, 5000);
     }
 
-    private static long ms(long start) { return Math.max(0, (System.nanoTime() - start) / 1_000_000L); }
+    private static boolean isVpnActive() {
+        if (app == null) return false;
+        try {
+            ConnectivityManager cm = (ConnectivityManager)
+                    app.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            Network active = cm.getActiveNetwork();
+            if (active == null) return false;
+            NetworkCapabilities caps = cm.getNetworkCapabilities(active);
+            return caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static String displayEndpoint(Route r) {
+        if (r.isSystem()) {
+            return isVpnActive() ? "Android network · VPN active" : "Android network · direct fallback";
+        }
+        if ("doh".equals(r.protocol)) return r.endpoint;
+        return r.host + ":" + r.port;
+    }
+
+    private static long ms(long start) {
+        return Math.max(0, (System.nanoTime() - start) / 1_000_000L);
+    }
 
     private static long maxKnown(long... values) {
         long max = -1;
