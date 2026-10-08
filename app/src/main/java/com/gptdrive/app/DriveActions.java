@@ -44,7 +44,7 @@ final class DriveActions {
             context.startActivity(i);
             return;
         }
-        boolean preview = name.matches(".*\\\\.(md|txt|log|json|xml|yaml|yml|csv|pdf|zip)$") ||
+        boolean preview = name.matches(".*\\\\.(md|txt|log|json|xml|yaml|yml|csv|pdf|zip|docx|xlsx|pptx|mp4|webm|3gp|mp3|m4a|wav|ogg)$") ||
                 mime.equals("application/pdf") || mime.equals("application/zip") ||
                 mime.startsWith("text/") || mime.equals("application/json");
         if (!"external".equals(preference) && preview) {
