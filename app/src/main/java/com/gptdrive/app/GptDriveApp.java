@@ -20,6 +20,8 @@ public final class GptDriveApp extends Application implements Application.Activi
     @Override public void onCreate() {
         super.onCreate();
         registerActivityLifecycleCallbacks(this);
+        SmartDnsManager.initialize(this);
+        SmartDnsProxy.applyWebViewRouting(this, null);
         LibraryWatcherService.ensureStarted(this);
     }
 
