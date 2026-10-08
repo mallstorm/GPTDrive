@@ -11,7 +11,8 @@
         android:name=".GptDriveApp"
         android:allowBackup="false"
         android:label="GPT Drive"
-        android:icon="@drawable/ic_drive"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
 
