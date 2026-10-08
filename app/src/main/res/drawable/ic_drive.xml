@@ -4,22 +4,39 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- White launcher surface: no dark/black corners in the source asset -->
+    <!-- Full light surface so launcher masks never expose dark corners -->
     <path android:fillColor="#FFFFFF" android:pathData="M0,0 H108 V108 H0 Z"/>
 
-    <!-- Colored library tabs -->
-    <path android:fillColor="#17C69A" android:pathData="M23,22 C23,18 26,15 30,15 H67 C71,15 74,18 74,22 V63 H23 Z"/>
-    <path android:fillColor="#FFC23D" android:pathData="M31,30 C31,26 34,23 38,23 H76 C80,23 83,26 83,30 V66 H31 Z"/>
-    <path android:fillColor="#29A9F6" android:pathData="M37,38 C37,34 40,31 44,31 H82 C86,31 89,34 89,38 V68 H37 Z"/>
+    <!-- Enlarged library tabs: deliberately fill more of the launcher safe zone -->
+    <path android:fillColor="#16C89B" android:pathData="M14,19 C14,14 18,11 23,11 H66 C71,11 75,15 75,20 V63 H14 Z"/>
+    <path android:fillColor="#FFC23E" android:pathData="M24,28 C24,23 28,20 33,20 H77 C82,20 86,24 86,29 V67 H24 Z"/>
+    <path android:fillColor="#2BAAF6" android:pathData="M32,36 C32,31 36,28 41,28 H86 C91,28 95,32 95,37 V70 H32 Z"/>
 
-    <!-- White file holder -->
-    <path android:fillColor="#F8FAFC" android:pathData="M18,47 C18,43 21,40 25,40 H35 L40,45 H87 C91,45 94,48 94,52 V88 C94,92 91,95 87,95 H25 C21,95 18,92 18,88 Z"/>
-    <path android:fillColor="#E5E7EB" android:pathData="M18,53 H94 V57 H18 Z"/>
+    <!-- Large white folder -->
+    <path android:fillColor="#F8FAFC" android:pathData="M8,47 C8,42 12,38 17,38 H31 L38,45 H91 C97,45 100,49 100,54 V90 C100,96 96,99 90,99 H18 C12,99 8,95 8,89 Z"/>
+    <path android:fillColor="#E5E7EB" android:pathData="M8,53 H100 V57 H8 Z"/>
 
-    <!-- Simple interlocking GPT-style knot -->
-    <group android:pivotX="56" android:pivotY="71">
-        <path android:fillColor="@android:color/transparent" android:strokeColor="#0C9F7D" android:strokeWidth="4.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M44,69 C44,62 49,57 56,57 C63,57 68,62 68,69 C68,76 63,81 56,81 C49,81 44,76 44,69 Z"/>
-        <path android:fillColor="@android:color/transparent" android:strokeColor="#13B98F" android:strokeWidth="4.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M50,60 C56,56 64,58 68,64 C72,70 70,78 64,82 C58,86 50,84 46,78 C42,72 44,64 50,60 Z"/>
-        <path android:fillColor="@android:color/transparent" android:strokeColor="#07866B" android:strokeWidth="4.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M47,63 L56,58 L65,63 L65,73 L56,79 L47,73 Z"/>
-    </group>
+    <!-- High-contrast ChatGPT badge, intentionally large for 48-64 px launchers -->
+    <path android:fillColor="#079B73" android:pathData="M74,58 A18,18 0,1 1,73.9,58 Z"/>
+    <path android:fillColor="#0BB589" android:pathData="M74,61 A15,15 0,1 1,73.9,61 Z"/>
+
+    <!-- Simplified thick white knot: survives downscaling better than the previous thin green mark -->
+    <path android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M66,70 C66,64 71,60 76,60 C82,60 86,64 86,70 C86,75 82,80 76,80 C71,80 66,75 66,70 Z"/>
+    <path android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M69,63 C74,59 81,61 85,66 C89,71 87,78 82,82 C77,86 70,84 66,79 C62,74 64,67 69,63 Z"/>
+    <path android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M69,66 L76,62 L84,67 L84,75 L76,80 L68,75 Z"/>
 </vector>
