@@ -158,7 +158,7 @@ public final class FilePreviewActivity extends Activity {
                 ZipEntry entry=entries.nextElement();
                 if(entry.isDirectory())continue;
                 if(++count>1000)throw new IOException("Архив содержит больше 1000 файлов");
-                String path=entry.getName().replace('\\\\','/');
+                String path=entry.getName().replace('\\','/');
                 if(path.startsWith("/")||path.contains("../")||path.equals("..")||path.contains(":"))
                     throw new IOException("Небезопасный путь в архиве");
                 String basename=path.substring(path.lastIndexOf('/')+1);
