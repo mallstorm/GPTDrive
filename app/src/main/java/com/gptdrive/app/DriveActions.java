@@ -23,11 +23,36 @@ final class DriveActions {
     static boolean isLink(DriveItem item){return item!=null&&LINK_MIME.equals(item.mime);}
     static boolean isImage(DriveItem item){return item!=null&&item.mime!=null&&item.mime.startsWith("image/");}
 
-    static void open(Context context,DriveItem item){
-        if(item==null)return;
-        if(isImage(item)){Intent i=new Intent(context,ImageViewerActivity.class);i.putExtra(ImageViewerActivity.EXTRA_ID,item.id);context.startActivity(i);return;}
-        if(isLink(item)){Intent i=new Intent(context,BrowserActivity.class);i.putExtra(BrowserActivity.EXTRA_SECTION,item.category);i.putExtra(BrowserActivity.EXTRA_URL,item.url);i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID,item.accountId);context.startActivity(i);return;}
-        try{Uri uri=DocumentsContract.buildDocumentUri(AUTHORITY,"file:"+item.id);Intent i=new Intent(Intent.ACTION_VIEW);i.setDataAndType(uri,item.mime==null?"*/*":item.mime);i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);context.startActivity(i);}catch(Exception e){Toast.makeText(context,"Не удалось открыть файл",Toast.LENGTH_SHORT).show();}
+    static void open(Context context, DriveItem item) {
+        if (item == null) return;
+        if (isLink(item)) {
+            Intent i = new Intent(context, BrowserActivity.class);
+            i.putExtra(BrowserActivity.EXTRA_SECTION, item.category);
+            i.putExtra(BrowserActivity.EXTRA_URL, item.url);
+            i.putExtra(BrowserActivity.EXTRA_ACCOUNT_ID, item.accountId);
+            context.startActivity(i);
+            return;
+        }
+        String name = item.name == null ? "" : item.name.toLowerCase(java.util.Locale.ROOT);
+        String mime = item.mime == null ? "" : item.mime.toLowerCase(java.util.Locale.ROOT);
+        String preference = context.getSharedPreferences("file-handlers", Context.MODE_PRIVATE)
+                .getString("mode", "auto");
+        if (!"external".equals(preference) && (isImage(item) ||
+                mime.startsWith("image/") || name.matches(".*\\.(jpg|jpeg|png|webp|gif|bmp|heic)$"))) {
+            Intent i = new Intent(context, ImageViewerActivity.class);
+            i.putExtra(ImageViewerActivity.EXTRA_ID, item.id);
+            context.startActivity(i);
+            return;
+        }
+        try {
+            Uri uri = DocumentsContract.buildDocumentUri(AUTHORITY, "file:" + item.id);
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(uri, mime.isEmpty() ? "*/*" : mime);
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            context.startActivity(Intent.createChooser(i, "Открыть файл"));
+        } catch (Exception e) {
+            Toast.makeText(context, "Нет приложения для открытия этого формата", Toast.LENGTH_LONG).show();
+        }
     }
 
     static void download(Context context,DriveItem item){
