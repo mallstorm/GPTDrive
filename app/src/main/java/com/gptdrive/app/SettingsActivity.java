@@ -70,6 +70,8 @@ public final class SettingsActivity extends Activity {
         body.addView(linkCard("Синхронизация библиотеки", "Обновить облачный индекс GPT Drive", () -> openSync("Library")));
         body.addView(linkCard("Файлы устройства", "Открыть документ из памяти телефона", this::openSystemFiles));
         body.addView(linkCard("Корзина", "Удалённые файлы и восстановление", this::openDeleted));
+        body.addView(section("ПРОСМОТР ФАЙЛОВ"));
+        body.addView(linkCard("Открытие файлов", "Автоматически, встроенный или внешний просмотрщик", this::chooseFileOpening));
         body.addView(section("БЕЗОПАСНОСТЬ"));
         body.addView(securityCard());
         body.addView(section("СЕТЬ"));
@@ -124,6 +126,22 @@ public final class SettingsActivity extends Activity {
         row.setOnClickListener(v -> action.run());
         card.addView(row);
         return card;
+    }
+
+    private void chooseFileOpening() {
+        String[] labels = {"Автоматически", "Предпочитать встроенные", "Предпочитать приложения Android"};
+        String[] values = {"auto", "internal", "external"};
+        android.content.SharedPreferences prefs = getSharedPreferences("file-handlers", MODE_PRIVATE);
+        String current = prefs.getString("mode", "auto");
+        int selected = 0;
+        for (int i = 0; i < values.length; i++) if (values[i].equals(current)) selected = i;
+        new AlertDialog.Builder(this)
+                .setTitle("Открытие файлов")
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    prefs.edit().putString("mode", values[which]).apply();
+                    dialog.dismiss();
+                })
+                .setNegativeButton("Отмена", null).show();
     }
 
     private void openSync(String section) {
