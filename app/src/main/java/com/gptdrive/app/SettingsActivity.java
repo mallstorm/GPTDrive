@@ -8,6 +8,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -23,6 +24,7 @@ public final class SettingsActivity extends Activity {
     private static final int MUTED = 0xFF667085;
     private static final int BG = 0xFFF7F9FA;
     private static final int REQ_NOTIFICATIONS = 7401;
+    private static final int REQ_OPEN_FILE = 100;
 
     private Switch watcherSwitch;
     private TextView intervalValue;
@@ -37,6 +39,17 @@ public final class SettingsActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         refresh();
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_OPEN_FILE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+        try {
+            if (flags != 0) getContentResolver().takePersistableUriPermission(uri, flags);
+        } catch (Exception ignored) {}
+        DriveActions.openLocal(this, uri);
     }
 
     private void buildUi() {
@@ -68,7 +81,7 @@ public final class SettingsActivity extends Activity {
         body.addView(section("СИНХРОНИЗАЦИЯ И ХРАНИЛИЩЕ"));
         body.addView(watcherCard());
         body.addView(linkCard("Синхронизация библиотеки", "Обновить облачный индекс GPT Drive", () -> openSync("Library")));
-        body.addView(linkCard("Файлы устройства", "Открыть документ из памяти телефона", this::openSystemFiles));
+        body.addView(linkCard("Файлы устройства", "Открыть файл во встроенном или системном просмотрщике", this::openSystemFiles));
         body.addView(linkCard("Корзина", "Удалённые файлы и восстановление", this::openDeleted));
         body.addView(section("ПРОСМОТР ФАЙЛОВ"));
         body.addView(linkCard("Открытие файлов", "Автоматически, встроенный или внешний просмотрщик", this::chooseFileOpening));
@@ -172,7 +185,8 @@ public final class SettingsActivity extends Activity {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             i.setType("*/*");
             i.addCategory(Intent.CATEGORY_OPENABLE);
-            startActivityForResult(i, 100);
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(i, REQ_OPEN_FILE);
         } catch (Exception ignored) {}
     }
 
