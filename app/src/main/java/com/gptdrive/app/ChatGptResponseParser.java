@@ -52,8 +52,13 @@ final class ChatGptResponseParser {
         if (o == null) return null;
         String rawUrl = firstStringDeep(o, "download_url", "downloadUrl", "url", "asset_pointer", "assetPointer");
         String fileId = ChatGptModels.first(firstStringDeep(o, "file_id", "fileId"), ChatGptModels.extractFileId(rawUrl));
-        String libraryFileId = firstStringDeep(o, "library_file_id", "libraryFileId");
-        String id = ChatGptModels.first(fileId, libraryFileId, firstStringDeep(o, "id"));
+        String objectId = firstStringDeep(o, "id");
+        String libraryFileId = firstStringDeep(o, "library_file_id", "libraryFileId", "node_id", "nodeId");
+        // Current Library node payloads may expose the mutable library identifier as the
+        // wrapper/node id while the underlying content keeps its own file_id. Preserve both.
+        if (libraryFileId.isEmpty() && !fileId.isEmpty() && !objectId.isEmpty() && !objectId.equals(fileId))
+            libraryFileId = objectId;
+        String id = ChatGptModels.first(fileId, libraryFileId, objectId);
         String name = firstStringDeep(o, "file_name", "filename", "fileName", "name", "title");
         if (looksInternalStorageName(name)) return null;
         if (fileId.isEmpty() && (id.isEmpty() || name.isEmpty())) return null;
