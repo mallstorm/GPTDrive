@@ -41,6 +41,7 @@ final class LibraryMutationClient {
     private final Context app;
     private final long accountId;
     private final HttpTransport transport;
+    private Map<String, String> remoteLibraryIds;
 
     LibraryMutationClient(Context context, long accountId) {
         this.app = context.getApplicationContext();
@@ -103,7 +104,7 @@ final class LibraryMutationClient {
 
     boolean moveToTrash(DriveItem item) throws Exception {
         String lib = resolveLibraryFileId(item);
-        if (lib.isEmpty()) throw new java.io.IOException("У файла нет library_file_id");
+        if (lib.isEmpty()) throw new java.io.IOException("У файла нет library_file_id после обновления метаданных");
         HttpResponse r = request("DELETE", "/backend-api/files/library/files/" + Uri.encode(lib), null, false);
         if (r.code == 404 || r.code == 405) {
             String fid = item.fileId.isEmpty() ? RemoteFileSource.extractFileId(item.url) : item.fileId;
@@ -136,17 +137,61 @@ final class LibraryMutationClient {
         return true;
     }
 
-    String resolveLibraryFileId(DriveItem item) {
+    String resolveLibraryFileId(DriveItem item) throws Exception {
         if (item == null) return "";
         if (!item.libraryFileId.trim().isEmpty()) return item.libraryFileId.trim();
         String fid = item.fileId.trim();
         if (fid.isEmpty()) fid = RemoteFileSource.extractFileId(item.url);
         if (fid == null || fid.trim().isEmpty()) return "";
+        fid = fid.trim();
+
         DriveDb db = new DriveDb(app);
         Cursor c = db.getReadableDatabase().query("files", new String[]{"library_file_id"},
-                "account_id=? AND file_id=?", new String[]{Long.toString(accountId), fid.trim()}, null, null, null, "1");
-        try { return c.moveToFirst() ? safe(c.getString(0)) : ""; }
+                "account_id=? AND file_id=?", new String[]{Long.toString(accountId), fid}, null, null, null, "1");
+        String local;
+        try { local = c.moveToFirst() ? safe(c.getString(0)) : ""; }
         finally { c.close(); }
+        if (!local.isEmpty()) return local;
+
+        // Older local indexes may have been created before the Library parser retained the
+        // node/wrapper id. Resolve it once from the live Library snapshot so deletion works
+        // immediately after an app upgrade, without requiring the user to press Sync first.
+        String remote = resolveRemoteLibraryFileId(fid);
+        if (!remote.isEmpty()) {
+            try {
+                android.content.ContentValues v = new android.content.ContentValues();
+                v.put("library_file_id", remote);
+                db.getWritableDatabase().update("files", v, "account_id=? AND file_id=?",
+                        new String[]{Long.toString(accountId), fid});
+            } catch (Exception ignored) {}
+        }
+        return remote;
+    }
+
+    private String resolveRemoteLibraryFileId(String fileId) throws Exception {
+        if (remoteLibraryIds == null) {
+            LinkedHashMap<String, String> ids = new LinkedHashMap<>();
+            LibraryPaginationEngine.Result snapshot = LibraryPaginationEngine.load(
+                    page -> request("POST", page.endpoint, page.payload, true),
+                    response -> {
+                        if (response.code == 401 || response.code == 403)
+                            throw new java.io.IOException("Сессия ChatGPT недоступна (HTTP " + response.code + ")");
+                        if (response.code == 429)
+                            throw new java.io.IOException("ChatGPT ограничил запросы (HTTP 429)");
+                        if (response.code != 200)
+                            throw new java.io.IOException("Library: HTTP " + response.code);
+                    },
+                    20,
+                    null);
+            for (ChatGptModels.RemoteFile f : snapshot.files) {
+                if (f == null) continue;
+                String fid = safe(f.fileId);
+                String lib = safe(f.libraryFileId);
+                if (!fid.isEmpty() && !lib.isEmpty()) ids.put(fid, lib);
+            }
+            remoteLibraryIds = ids;
+        }
+        return safe(remoteLibraryIds.get(fileId));
     }
 
     private void removeLocalAfterTrash(DriveItem item, String lib) {
