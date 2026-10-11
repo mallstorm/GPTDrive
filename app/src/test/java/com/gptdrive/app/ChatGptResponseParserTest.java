@@ -19,6 +19,29 @@ public class ChatGptResponseParserTest {
         assertEquals(42, page.meta.total);
     }
 
+    @Test public void capturesWrapperIdAsLibraryFileId() throws Exception {
+        ChatGptModels.RemoteFile f = ChatGptResponseParser.mapToRemote(new JSONObject(
+                "{\"id\":\"lib_9f37\",\"file_id\":\"file_abc12345\",\"file_name\":\"report.pdf\"}"));
+        assertNotNull(f);
+        assertEquals("file_abc12345", f.fileId);
+        assertEquals("lib_9f37", f.libraryFileId);
+    }
+
+    @Test public void capturesNodeIdAsLibraryFileId() throws Exception {
+        ChatGptModels.RemoteFile f = ChatGptResponseParser.mapToRemote(new JSONObject(
+                "{\"node_id\":\"node_42\",\"file_id\":\"file_abc12345\",\"file_name\":\"report.pdf\"}"));
+        assertNotNull(f);
+        assertEquals("node_42", f.libraryFileId);
+    }
+
+    @Test public void doesNotMistakeRawFileIdForLibraryFileId() throws Exception {
+        ChatGptModels.RemoteFile f = ChatGptResponseParser.mapToRemote(new JSONObject(
+                "{\"id\":\"file_xyz98765\",\"name\":\"x.png\"}"));
+        assertNotNull(f);
+        assertEquals("file_xyz98765", f.fileId);
+        assertEquals("", f.libraryFileId);
+    }
+
     @Test public void acceptsRootCursorAsOpaqueContinuation() {
         ChatGptModels.LibraryPage page = ChatGptResponseParser.decodeLibraryPage(
                 "{\"items\":[{\"id\":\"file_xyz98765\",\"name\":\"x.png\"}],\"cursor\":\"opaque-next\"}");
