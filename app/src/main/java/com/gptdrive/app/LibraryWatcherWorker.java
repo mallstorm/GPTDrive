@@ -27,11 +27,12 @@ public final class LibraryWatcherWorker extends Worker {
         Context app = getApplicationContext();
         if (!LibraryWatcherService.isEnabled(app)) return Result.success();
         ensureChannel(app);
-        DriveDb db = new DriveDb(app);
+        DriveDb db = DriveDb.get(app);
         boolean transientFailure = false;
         try {
             for (AccountProfile account : db.listAccounts()) {
-                if (account == null || !ChatGptSessionStore.has(app, account.id)) continue;
+                if (account == null || !ChatGptSessionStore.has(app, account.id)
+                        || AccountAuth.needsLogin(app, account.id)) continue;
                 try {
                     List<ChatGptModels.RemoteFile> recent =
                             new LibraryWatcherClient(app, account.id).pollRecent();
@@ -55,13 +56,14 @@ public final class LibraryWatcherWorker extends Worker {
                         }
                     }
                 } catch (ChatGptProvider.AuthException e) {
-                    // Invalid sessions require user action; retrying cannot repair them.
+                    // Retrying cannot repair it: flag the account and notify once.
+                    AccountAuth.markNeedsLogin(app, account.id, e.getMessage());
                 } catch (Exception e) {
                     transientFailure = true;
                 }
             }
         } finally {
-            db.close();
+            // DriveDb is the process-wide singleton: never close it here.
         }
         return transientFailure ? Result.retry() : Result.success();
     }

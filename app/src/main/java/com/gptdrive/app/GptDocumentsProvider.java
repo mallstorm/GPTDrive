@@ -23,7 +23,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
     private DocumentsIndex index;
 
     @Override public boolean onCreate() {
-        db = new DriveDb(getContext());
+        db = DriveDb.get(getContext());
         index = new DocumentsIndex(db);
         return true;
     }
@@ -43,7 +43,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
                 ? MainActivity.formatBytes(a.remoteUsedBytes) + " / " + MainActivity.formatBytes(a.remoteQuotaBytes)
                 : (known > 0 ? MainActivity.formatBytes(known) + " индексировано" : "объём —");
         String summary = a.displayName() + "  •  " + a.planLabel() + "  •  " + size;
-        if (!a.hasSession()) summary += "  •  Нужен вход";
+        if (!AccountAuth.connected(a)) summary += "  •  Нужен вход";
         r.add(DocumentsContract.Root.COLUMN_SUMMARY, summary);
         r.add(DocumentsContract.Root.COLUMN_FLAGS, DocumentsContract.Root.FLAG_SUPPORTS_SEARCH);
         r.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "*/*");

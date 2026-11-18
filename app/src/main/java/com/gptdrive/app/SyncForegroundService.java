@@ -51,7 +51,7 @@ public final class SyncForegroundService extends Service {
     }
 
     private void runSync(long accountId) {
-        DriveDb db = new DriveDb(this);
+        DriveDb db = DriveDb.get(this);
         try {
             ChatGptApiClient client = new ChatGptApiClient(this, db, accountId);
             ChatGptApiClient.SyncResult result = client.sync((phase, part, total, objects) -> {
@@ -61,6 +61,7 @@ public final class SyncForegroundService extends Service {
             SyncRuntimeState.success(this, accountId, result);
             notifyRoots();
         } catch (ChatGptApiClient.AuthException e) {
+            AccountAuth.markNeedsLogin(this, accountId, e.getMessage());
             SyncRuntimeState.auth(this, accountId,
                     e.getMessage() == null ? "Сессия ChatGPT недействительна" : e.getMessage());
         } catch (Exception e) {

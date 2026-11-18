@@ -62,7 +62,7 @@ public final class ChatGptOAuthActivity extends Activity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         targetId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, 0);
         newAccount = getIntent().getBooleanExtra(EXTRA_NEW_ACCOUNT, false);
         if (targetId <= 0 || db.accountById(targetId) == null) { finish(); return; }

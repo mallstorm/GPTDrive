@@ -46,7 +46,7 @@ public final class ChatGptAuthActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         targetId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, 0);
         newAccount = getIntent().getBooleanExtra(EXTRA_NEW_ACCOUNT, false);
         previousActiveId = db.activeAccountId();
@@ -277,6 +277,7 @@ public final class ChatGptAuthActivity extends Activity {
         }
         cleanupEmptyPlaceholders(finalId);
         notifyRoots();
+        AutoSync.startNow(this, finalId);
 
         closing = true;
         setResult(RESULT_OK);
@@ -347,7 +348,7 @@ public final class ChatGptAuthActivity extends Activity {
 
     @Override protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
-        if (!authorized && !closing) cancelAuthorization();
+        if (isFinishing() && !authorized && !closing) cancelAuthorization();
         if (web != null) {
             web.removeJavascriptInterface("GPTDriveAuth");
             web.destroy();

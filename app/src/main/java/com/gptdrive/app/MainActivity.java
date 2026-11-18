@@ -53,7 +53,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         SmartDnsManager.initialize(this);
         buildUi();
     }
@@ -173,7 +173,7 @@ public final class MainActivity extends Activity {
         card.addView(arrow, new LinearLayout.LayoutParams(dp(28), -1));
         card.setOnClickListener(v -> {
             AccountProfile a = db.activeAccount();
-            if (a != null && !a.hasSession()) login(a, false); else openSync("Library");
+            if (a != null && !AccountAuth.connected(a)) login(a, false); else openSync("Library");
         });
         return card;
     }
@@ -296,7 +296,7 @@ public final class MainActivity extends Activity {
             storageValue.setText(known > 0 ? formatBytes(known) + " индексировано" : "Объём не определён");
         }
         planLine.setText("План: " + a.planLabel() + "  •  " + db.countAll(a.id) + " элементов");
-        if (!a.hasSession()) {
+        if (!AccountAuth.connected(a)) {
             syncLine.setText("○ Нужен вход в ChatGPT — нажми здесь");
             syncLine.setTextColor(0xFF8A5A00);
         } else if (a.lastSync > 0) {

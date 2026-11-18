@@ -158,9 +158,9 @@ public final class SettingsActivity extends Activity {
     }
 
     private void openSync(String section) {
-        DriveDb db = new DriveDb(this);
+        DriveDb db = DriveDb.get(this);
         AccountProfile a = db.activeAccount();
-        if (a != null && !a.hasSession()) {
+        if (a != null && !AccountAuth.connected(a)) {
             Intent login = new Intent(this, ChatGptAuthActivity.class);
             login.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, a.id);
             login.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, false);
@@ -174,7 +174,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private void openDeleted() {
-        AccountProfile a = new DriveDb(this).activeAccount();
+        AccountProfile a = DriveDb.get(this).activeAccount();
         Intent i = new Intent(this, DeletedLibraryActivity.class);
         if (a != null) i.putExtra(DeletedLibraryActivity.EXTRA_ACCOUNT_ID, a.id);
         startActivity(i);

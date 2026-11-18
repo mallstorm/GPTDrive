@@ -47,7 +47,7 @@ public final class DeletedLibraryActivity extends Activity {
 
     @Override protected void onCreate(Bundle stateBundle) {
         super.onCreate(stateBundle);
-        DriveDb db = new DriveDb(this);
+        DriveDb db = DriveDb.get(this);
         accountId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, db.activeAccountId());
         buildUi(db.accountById(accountId));
         seedSessionCookies();

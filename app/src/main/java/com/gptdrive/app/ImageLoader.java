@@ -33,7 +33,7 @@ final class ImageLoader {
     static void load(ImageView view, String url) {
         if (view == null || url == null) return;
         Context context = view.getContext().getApplicationContext();
-        long accountId = new DriveDb(context).activeAccountId();
+        long accountId = DriveDb.get(context).activeAccountId();
         load(view, accountId, url);
     }
 

@@ -35,7 +35,7 @@ public final class AccountManagerActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         buildUi();
     }
 

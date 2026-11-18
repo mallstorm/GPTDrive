@@ -19,6 +19,7 @@ public final class GptDriveApp extends Application implements Application.Activi
 
     @Override public void onCreate() {
         super.onCreate();
+        AccountAuth.init(this);
         registerActivityLifecycleCallbacks(this);
         SmartDnsManager.initialize(this);
         SmartDnsProxy.applyWebViewRouting(this, null);
@@ -33,6 +34,8 @@ public final class GptDriveApp extends Application implements Application.Activi
             if (AppLockManager.needsUnlock(this) && !(activity instanceof UnlockActivity)) {
                 startActivity(new Intent(this, UnlockActivity.class)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+            } else {
+                AutoSync.onForeground(this);
             }
         }
     }

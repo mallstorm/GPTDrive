@@ -32,6 +32,7 @@ final class ChatGptSessionStore {
             out.put("savedAt", System.currentTimeMillis());
             String sealed = SecureJsonStore.seal(KEY_ALIAS, out.toString());
             prefs(context).edit().putString(PREFIX + localAccountId, sealed).apply();
+            AccountAuth.clear(context, localAccountId);
             return true;
         } catch (Exception e) {
             return false;
@@ -123,6 +124,18 @@ final class ChatGptSessionStore {
             this.accountId = accountId;
             this.email = email;
             this.savedAt = savedAt;
+        }
+
+        /** True when the JWT exp claim says the token is dead or about to be (60 s margin). */
+        boolean expired() {
+            try {
+                String[] p = accessToken.split("\\.");
+                if (p.length < 2) return false;
+                byte[] raw = android.util.Base64.decode(p[1],
+                        android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING);
+                long exp = new JSONObject(new String(raw, java.nio.charset.StandardCharsets.UTF_8)).optLong("exp", 0);
+                return exp > 0 && exp * 1000L - 60_000L <= System.currentTimeMillis();
+            } catch (Exception e) { return false; }
         }
     }
 }

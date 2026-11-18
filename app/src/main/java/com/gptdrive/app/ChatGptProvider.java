@@ -41,6 +41,11 @@ final class ChatGptProvider {
 
     int lastLibraryStrategy() { return lastLibraryStrategy; }
 
+    /** Shared authenticated request path (token refresh, cookies, challenge bootstrap). */
+    HttpResponse request(String method, String endpoint, String payload) throws Exception {
+        return backend(method, endpoint, payload, true, true);
+    }
+
     ChatGptModels.LibrarySnapshot loadLibrary(int maxPages, Progress progress) throws Exception {
         return loadLibrary(maxPages, progress, null);
     }
@@ -124,7 +129,7 @@ final class ChatGptProvider {
                     (cursor.isEmpty() ? "" : "&after=" + Uri.encode(cursor));
             HttpResponse r = backend("GET", ep, null, true, true);
             if (r.code == 401 || r.code == 403) throw new AuthException("ChatGPT session истекла (HTTP " + r.code + ")");
-            if (r.code != 200) break;
+            if (r.code != 200) throw new java.io.IOException("ChatGPT: HTTP " + r.code + " на странице " + (pageNo + 1));
             JSONObject root = new JSONObject(r.bodyUtf8());
             JSONArray items = root.optJSONArray("items");
             if (items == null || items.length() == 0) break;
@@ -136,6 +141,7 @@ final class ChatGptProvider {
             String next = root.optString("cursor", "").trim();
             if (next.isEmpty() || next.equals(cursor)) break;
             cursor = next;
+            if (pageNo == 99) throw new java.io.IOException("Список изображений длиннее 100 страниц — загрузка неполная");
         }
         return new ArrayList<>(out.values());
     }
@@ -148,7 +154,7 @@ final class ChatGptProvider {
                     (cursor.isEmpty() ? "" : "&cursor=" + Uri.encode(cursor));
             HttpResponse r = backend("GET", ep, null, true, true);
             if (r.code == 401 || r.code == 403) throw new AuthException("ChatGPT session истекла (HTTP " + r.code + ")");
-            if (r.code != 200) break;
+            if (r.code != 200) throw new java.io.IOException("ChatGPT: HTTP " + r.code + " на странице " + (pageNo + 1));
             JSONObject root = new JSONObject(r.bodyUtf8());
             JSONArray items = root.optJSONArray("items");
             if (items == null || items.length() == 0) break;
@@ -202,6 +208,7 @@ final class ChatGptProvider {
             String next = root.optString("cursor", "").trim();
             if (next.isEmpty() || next.equals(cursor)) break;
             cursor = next;
+            if (pageNo == 99) throw new java.io.IOException("Список проектов длиннее 100 страниц — загрузка неполная");
         }
         return out;
     }
@@ -265,7 +272,31 @@ final class ChatGptProvider {
 
     private HttpResponse backend(String method, String endpoint, String payload, boolean retryable, boolean followRedirects) throws Exception {
         ChatGptSessionStore.Session session = requireSession();
+        if (session.expired()) session = refreshOrFail();
         bootstrap();
+        HttpResponse response = send(session, method, endpoint, payload, retryable, followRedirects);
+        if (response.code == 401) {
+            session = refreshOrFail();
+            response = send(session, method, endpoint, payload, retryable, followRedirects);
+            if (response.code == 401) {
+                AccountAuth.markNeedsLogin(context, accountId, "HTTP 401");
+            }
+        }
+        return response;
+    }
+
+    /** One refresh attempt; failure flips the account to "needs login" and notifies once. */
+    private ChatGptSessionStore.Session refreshOrFail() throws AuthException {
+        if (ChatGptSessionRefresher.refresh(context, accountId)) {
+            ChatGptSessionStore.Session fresh = ChatGptSessionStore.load(context, accountId);
+            if (fresh != null && !fresh.accessToken.isEmpty()) return fresh;
+        }
+        AccountAuth.markNeedsLogin(context, accountId, "token refresh failed");
+        throw new AuthException("ChatGPT session истекла — нужен новый вход");
+    }
+
+    private HttpResponse send(ChatGptSessionStore.Session session, String method, String endpoint, String payload,
+                              boolean retryable, boolean followRedirects) throws Exception {
         Map<String, String> h = new LinkedHashMap<>();
         h.put("Authorization", "Bearer " + session.accessToken);
         h.put("Accept", "application/json, text/plain, */*");

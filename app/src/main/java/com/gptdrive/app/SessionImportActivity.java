@@ -36,7 +36,7 @@ public final class SessionImportActivity extends Activity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         targetId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, 0);
         newAccount = getIntent().getBooleanExtra(EXTRA_NEW_ACCOUNT, false);
         if (targetId <= 0 || db.accountById(targetId) == null) { finish(); return; }
@@ -69,7 +69,7 @@ public final class SessionImportActivity extends Activity {
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-1, dp(50)); pp.setMargins(0, dp(10), 0, 0);
         root.addView(paste, pp);
 
-        editor = new EditText(this);
+        editor = new EditText(this); editor.setId(7301);
         editor.setHint("Вставь полный JSON из /api/auth/session");
         editor.setTextSize(12);
         editor.setGravity(Gravity.TOP | Gravity.START);
@@ -125,6 +125,7 @@ public final class SessionImportActivity extends Activity {
             db.setActiveAccount(targetId);
             imported = true;
             notifyRoots();
+            AutoSync.startNow(this, targetId);
             Toast.makeText(this, "Library session подключена", Toast.LENGTH_SHORT).show();
             setResult(RESULT_OK);
             finish();
@@ -158,7 +159,7 @@ public final class SessionImportActivity extends Activity {
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
 
     @Override protected void onDestroy() {
-        if (!imported && newAccount && !ChatGptOAuthStore.has(this, targetId) && !ChatGptSessionStore.has(this, targetId)) {
+        if (isFinishing() && !imported && newAccount && !ChatGptOAuthStore.has(this, targetId) && !ChatGptSessionStore.has(this, targetId)) {
             AccountProfile a = db.accountById(targetId);
             if (a != null && !a.active) db.deleteAccount(targetId);
         }

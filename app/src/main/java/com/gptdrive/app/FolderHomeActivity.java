@@ -47,7 +47,7 @@ public final class FolderHomeActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         collections = new DriveCollections(db);
         SmartDnsManager.initialize(this);
         buildUi();
@@ -199,7 +199,7 @@ public final class FolderHomeActivity extends Activity {
 
         card.setOnClickListener(v -> {
             AccountProfile a = db.activeAccount();
-            if (a != null && !a.hasSession()) login(a); else openSync("Library");
+            if (a != null && !AccountAuth.connected(a)) login(a); else openSync("Library");
         });
         return card;
     }
@@ -282,7 +282,7 @@ public final class FolderHomeActivity extends Activity {
             storageValue.setText(quota.used > 0 ? MainActivity.formatBytes(quota.used) + " в облаке" : "Объём не определён");
             planLine.setText("План: " + a.planLabel() + " • лимит не получен");
         }
-        if (!a.hasSession()) {
+        if (!AccountAuth.connected(a)) {
             syncLine.setText("Нужен вход в ChatGPT");
             syncLine.setTextColor(0xFF8A5A00);
         } else if (a.lastSync > 0) {
@@ -352,7 +352,7 @@ public final class FolderHomeActivity extends Activity {
 
     private void openSync(String section) {
         AccountProfile a = db.activeAccount();
-        if (a != null && !a.hasSession()) {
+        if (a != null && !AccountAuth.connected(a)) {
             login(a);
             return;
         }

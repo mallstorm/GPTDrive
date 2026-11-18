@@ -55,7 +55,7 @@ public final class ExplorerActivityV2 extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         buildUi();
     }
 
@@ -203,7 +203,7 @@ public final class ExplorerActivityV2 extends Activity {
 
         card.setOnClickListener(v -> {
             AccountProfile a = db.activeAccount();
-            if (a != null && !a.hasSession()) login(a, false); else openSync("Library");
+            if (a != null && !AccountAuth.connected(a)) login(a, false); else openSync("Library");
         });
         return card;
     }
@@ -348,7 +348,7 @@ public final class ExplorerActivityV2 extends Activity {
             storageValue.setText(known > 0 ? MainActivity.formatBytes(known) + " индексировано" : "Объём не определён");
         }
         planLine.setText("План: " + a.planLabel());
-        if (!a.hasSession()) {
+        if (!AccountAuth.connected(a)) {
             syncLine.setText("Нужен вход в ChatGPT");
             syncLine.setTextColor(0xFF8A5A00);
         } else if (a.lastSync > 0) {
@@ -556,7 +556,7 @@ public final class ExplorerActivityV2 extends Activity {
             labels.setOrientation(LinearLayout.VERTICAL);
             TextView n = text((a.active ? "✓ " : "") + a.displayName(), 12, true);
             n.setSingleLine(true); n.setEllipsize(TextUtils.TruncateAt.END);
-            TextView m = text(a.planLabel() + "  •  " + (a.hasSession() ? "подключён" : "нужен вход"), 10, false); m.setTextColor(MUTED);
+            TextView m = text(a.planLabel() + "  •  " + (AccountAuth.connected(a) ? "подключён" : "нужен вход"), 10, false); m.setTextColor(MUTED);
             labels.addView(n); labels.addView(m);
             row.addView(labels, new LinearLayout.LayoutParams(0, dp(42), 1));
             panel.addView(row, new LinearLayout.LayoutParams(-1, dp(54)));

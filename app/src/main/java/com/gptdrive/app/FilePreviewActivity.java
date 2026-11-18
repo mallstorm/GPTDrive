@@ -94,7 +94,7 @@ public final class FilePreviewActivity extends Activity {
         PDFBoxResourceLoader.init(getApplicationContext());
 
         long id = getIntent().getLongExtra(EXTRA_ID, -1);
-        if (id >= 0) item = new DriveDb(this).byId(id);
+        if (id >= 0) item = DriveDb.get(this).byId(id);
         String uri = getIntent().getStringExtra(EXTRA_URI);
         if (uri != null && !uri.trim().isEmpty()) localUri = Uri.parse(uri);
         if (localUri == null && getIntent().getData() != null && Intent.ACTION_VIEW.equals(getIntent().getAction()))
