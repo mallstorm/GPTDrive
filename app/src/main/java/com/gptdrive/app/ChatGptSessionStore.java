@@ -14,6 +14,9 @@ final class ChatGptSessionStore {
     private static final String PREFIX = "acct_";
     private static final String KEY_ALIAS = "GPTDrive.BackendSession.v1";
 
+    private static final java.util.concurrent.ConcurrentHashMap<Long, Session> MEMORY =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private ChatGptSessionStore() {}
 
     static boolean save(Context context, long localAccountId, String sessionJson) {
@@ -32,6 +35,7 @@ final class ChatGptSessionStore {
             out.put("savedAt", System.currentTimeMillis());
             String sealed = SecureJsonStore.seal(KEY_ALIAS, out.toString());
             prefs(context).edit().putString(PREFIX + localAccountId, sealed).apply();
+            MEMORY.remove(localAccountId);
             AccountAuth.clear(context, localAccountId);
             return true;
         } catch (Exception e) {
@@ -41,6 +45,8 @@ final class ChatGptSessionStore {
 
     static Session load(Context context, long localAccountId) {
         if (context == null || localAccountId <= 0) return null;
+        Session memo = MEMORY.get(localAccountId);
+        if (memo != null) return memo;
         SharedPreferences p = prefs(context);
         String stored = p.getString(PREFIX + localAccountId, "");
         if (stored == null || stored.trim().isEmpty()) return null;
@@ -58,6 +64,7 @@ final class ChatGptSessionStore {
                 try { p.edit().putString(PREFIX + localAccountId, SecureJsonStore.seal(KEY_ALIAS, raw)).apply(); }
                 catch (Exception ignored) {}
             }
+            MEMORY.put(localAccountId, out);
             return out;
         } catch (Exception e) {
             return null;
@@ -70,6 +77,7 @@ final class ChatGptSessionStore {
 
     static void clear(Context context, long localAccountId) {
         if (context == null || localAccountId <= 0) return;
+        MEMORY.remove(localAccountId);
         prefs(context).edit().remove(PREFIX + localAccountId).apply();
     }
 
