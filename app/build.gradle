@@ -13,6 +13,14 @@ android {
     }
 
     signingConfigs {
+        // Fixed key committed to the repo: every CI debug build is signed identically, so a new
+        // build installs over the previous one. Real releases still use the secrets below.
+        debug {
+            storeFile file("${rootDir}/keystore/gptdrive-stable.jks")
+            storePassword 'gptdrive-stable'
+            keyAlias 'gptdrive'
+            keyPassword 'gptdrive-stable'
+        }
         release {
             def ksPath = System.getenv('ANDROID_KEYSTORE_PATH')
             if (ksPath != null && !ksPath.trim().isEmpty()) {
