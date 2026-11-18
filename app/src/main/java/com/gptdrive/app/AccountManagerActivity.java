@@ -19,7 +19,7 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Account switcher. Browser login and JSON-session import are deliberately separate actions. */
+/** Account switcher. Accounts are connected only through the in-app ChatGPT browser login. */
 public final class AccountManagerActivity extends Activity {
     private static final String AUTHORITY = "com.gptdrive.app.documents";
     private static final int MAX_ACCOUNTS = 20;
@@ -31,7 +31,6 @@ public final class AccountManagerActivity extends Activity {
     private DriveDb db;
     private LinearLayout list;
     private TextView addButton;
-    private TextView jsonButton;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -65,14 +64,9 @@ public final class AccountManagerActivity extends Activity {
         addButton.setOnClickListener(v -> startNewChatGptSessionChecked());
         actions.addView(addButton, new LinearLayout.LayoutParams(0, dp(46), 1));
 
-        jsonButton = actionButton("＋  JSON сессия", false);
-        jsonButton.setOnClickListener(v -> startNewSessionImportChecked());
-        LinearLayout.LayoutParams jp = new LinearLayout.LayoutParams(0, dp(46), 1);
-        jp.setMargins(dp(8), 0, 0, 0);
-        actions.addView(jsonButton, jp);
         root.addView(actions, new LinearLayout.LayoutParams(-1, dp(60)));
 
-        TextView help = text("Обычный вход и JSON-сессия — два независимых способа подключения Library.", 10, false);
+        TextView help = text("Вход выполняется в браузере ChatGPT. Сессия сохраняется и обновляется автоматически.", 10, false);
         help.setTextColor(MUTED);
         help.setPadding(dp(18), 0, dp(18), dp(8));
         root.addView(help, new LinearLayout.LayoutParams(-1, dp(30)));
@@ -103,11 +97,9 @@ public final class AccountManagerActivity extends Activity {
         for (AccountProfile a : registered) list.addView(row(a));
         boolean full = registered.size() >= MAX_ACCOUNTS;
         addButton.setEnabled(!full);
-        jsonButton.setEnabled(!full);
         addButton.setAlpha(full ? .45f : 1f);
-        jsonButton.setAlpha(full ? .45f : 1f);
         if (registered.isEmpty()) {
-            TextView empty = text("Подключи ChatGPT обычным входом или импортируй JSON-сессию.", 12, false);
+            TextView empty = text("Нажми «Добавить аккаунт» и войди в ChatGPT.", 12, false);
             empty.setTextColor(MUTED);
             empty.setGravity(Gravity.CENTER);
             list.addView(empty, new LinearLayout.LayoutParams(-1, dp(110)));
@@ -181,14 +173,6 @@ public final class AccountManagerActivity extends Activity {
         startNewChatGptSession();
     }
 
-    private void startNewSessionImportChecked() {
-        if (registeredAccounts().size() >= MAX_ACCOUNTS) {
-            Toast.makeText(this, "Можно подключить не более 20 аккаунтов", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        startNewSessionImport();
-    }
-
     private long newPlaceholder() { return db.addAccount("Новый аккаунт"); }
 
     private void startNewChatGptSession() {
@@ -199,25 +183,10 @@ public final class AccountManagerActivity extends Activity {
         startActivity(i);
     }
 
-    private void startNewSessionImport() {
-        long id = newPlaceholder();
-        Intent i = new Intent(this, SessionImportActivity.class);
-        i.putExtra(SessionImportActivity.EXTRA_ACCOUNT_ID, id);
-        i.putExtra(SessionImportActivity.EXTRA_NEW_ACCOUNT, true);
-        startActivity(i);
-    }
-
     private void loginExisting(AccountProfile a) {
         Intent i = new Intent(this, ChatGptAuthActivity.class);
         i.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, a.id);
         i.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, false);
-        startActivity(i);
-    }
-
-    private void importSession(AccountProfile a) {
-        Intent i = new Intent(this, SessionImportActivity.class);
-        i.putExtra(SessionImportActivity.EXTRA_ACCOUNT_ID, a.id);
-        i.putExtra(SessionImportActivity.EXTRA_NEW_ACCOUNT, false);
         startActivity(i);
     }
 
@@ -246,7 +215,6 @@ public final class AccountManagerActivity extends Activity {
 
         if (!a.active) addPopup(panel, w, "Сделать активным", () -> select(a), false);
         addPopup(panel, w, ChatGptSessionStore.has(this, a.id) ? "Обновить вход ChatGPT" : "Войти в ChatGPT", () -> loginExisting(a), false);
-        addPopup(panel, w, ChatGptSessionStore.has(this, a.id) ? "Обновить JSON-сессию" : "Подключить JSON-сессию", () -> importSession(a), false);
         addPopup(panel, w, "Диагностика", () -> diagnostics(a), false);
         addPopup(panel, w, "Удалить аккаунт", () -> {
             if (a.active) {

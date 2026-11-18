@@ -9,8 +9,8 @@ import java.util.Map;
 
 /**
  * Renews the short-lived accessToken through /api/auth/session using the account's long-lived
- * session cookies. Accounts connected by pasting Session JSON only have no cookies, so for them
- * refresh is impossible and the caller must fall back to "needs login".
+ * session cookies. If the cookies are gone or rejected, refresh is impossible and the caller must
+ * fall back to "needs login" (WebView sign-in).
  */
 final class ChatGptSessionRefresher {
     private ChatGptSessionRefresher() {}

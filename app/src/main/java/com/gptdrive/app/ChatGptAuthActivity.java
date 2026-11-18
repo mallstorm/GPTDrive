@@ -72,9 +72,11 @@ public final class ChatGptAuthActivity extends Activity {
         s.setJavaScriptCanOpenWindowsAutomatically(true);
         s.setSupportMultipleWindows(false);
         s.setMediaPlaybackRequiresUserGesture(true);
-        // Keep the auth UA browser-like. Extra application tokens can make some
-        // identity/anti-bot paths behave differently from the user's normal login.
-        s.setUserAgentString("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36");
+        // Browser-like UA built from the installed WebView: drops the "; wv" marker and "Version/x"
+        // token that make identity providers refuse embedded browsers, but keeps the real Chrome version.
+        String ua = browserUserAgent(this);
+        s.setUserAgentString(ua);
+        AppIdentity.rememberWebUserAgent(this, ua);
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
@@ -83,8 +85,20 @@ public final class ChatGptAuthActivity extends Activity {
         web.addJavascriptInterface(new AuthBridge(), "GPTDriveAuth");
         web.setWebChromeClient(new WebChromeClient());
         web.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView view, android.webkit.WebResourceRequest request) {
+                android.net.Uri u = request.getUrl();
+                String scheme = u == null ? "" : String.valueOf(u.getScheme()).toLowerCase(Locale.ROOT);
+                return !("https".equals(scheme) || "http".equals(scheme) || "about".equals(scheme));
+            }
+
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                pageHost = hostOf(url);
+            }
+
             @Override public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
+                pageHost = hostOf(url);
                 CookieManager.getInstance().flush();
                 String u = url == null ? "" : url.toLowerCase(Locale.ROOT);
 
@@ -192,6 +206,8 @@ public final class ChatGptAuthActivity extends Activity {
 
     private final class AuthBridge {
         @JavascriptInterface public void onSession(String json) {
+            String host = pageHost;
+            if (!(host.equals("chatgpt.com") || host.endsWith(".chatgpt.com"))) return;
             if (authorized || closing || json == null || json.trim().isEmpty() || "null".equals(json.trim())) return;
             try {
                 String raw = normalizeJson(json);
@@ -222,6 +238,27 @@ public final class ChatGptAuthActivity extends Activity {
                 });
             } catch (Exception ignored) {}
         }
+    }
+
+    private volatile String pageHost = "";
+
+    private static String hostOf(String url) {
+        try {
+            String h = android.net.Uri.parse(url == null ? "" : url).getHost();
+            return h == null ? "" : h.toLowerCase(Locale.ROOT);
+        } catch (Exception e) { return ""; }
+    }
+
+    private static String browserUserAgent(android.content.Context c) {
+        String fallback = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36";
+        try {
+            String ua = WebSettings.getDefaultUserAgent(c);
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("Chrome/[0-9.]+").matcher(ua);
+            if (!m.find()) return fallback;
+            String chrome = m.group();
+            return "Mozilla/5.0 (Linux; Android " + android.os.Build.VERSION.RELEASE
+                    + "; K) AppleWebKit/537.36 (KHTML, like Gecko) " + chrome + " Mobile Safari/537.36";
+        } catch (Exception e) { return fallback; }
     }
 
     private static String normalizeJson(String s) {

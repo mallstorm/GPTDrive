@@ -12,7 +12,7 @@ final class AutoSync {
 
     private AutoSync() {}
 
-    /** Immediately after login / Session JSON import. */
+    /** Immediately after WebView login. */
     static void startNow(Context context, long accountId) {
         if (context == null || accountId <= 0) return;
         try { SyncForegroundService.start(context.getApplicationContext(), accountId); }

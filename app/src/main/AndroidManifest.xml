@@ -24,8 +24,6 @@
         <activity android:name=".AccountManagerActivity" android:exported="false"/>
         <activity android:name=".SyncDiagnosticsActivity" android:exported="false"/>
         <activity android:name=".DnsSettingsActivity" android:exported="false"/>
-        <activity android:name=".ChatGptOAuthActivity" android:exported="false"/>
-        <activity android:name=".SessionImportActivity" android:exported="false"/>
         <activity android:name=".ChatGptAuthActivity" android:exported="false"/>
         <activity android:name=".FilePreviewActivity" android:exported="true">
             <intent-filter>

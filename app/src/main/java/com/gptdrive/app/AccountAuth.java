@@ -12,7 +12,7 @@ import android.os.Build;
 /**
  * Single place that answers "is this account usable right now?".
  *
- * An account is connected when it has a stored backend session (pasted Session JSON or WebView
+ * An account is connected when it has a stored backend session (saved by the in-app WebView
  * login) or WebView cookies, and has not been marked "needs login" after a failed token refresh.
  * Marking raises exactly one notification; saving a fresh session clears the mark.
  */
@@ -74,7 +74,7 @@ final class AccountAuth {
                     ? new Notification.Builder(c, CHANNEL) : new Notification.Builder(c);
             b.setSmallIcon(R.drawable.ic_drive)
                     .setContentTitle("GPT Drive: нужен вход")
-                    .setContentText(who + " — сессия ChatGPT истекла. Вставьте новый Session JSON.")
+                    .setContentText(who + " — сессия ChatGPT истекла. Откройте приложение и войдите снова.")
                     .setAutoCancel(true).setContentIntent(pi);
             nm.notify(notificationId(accountId), b.build());
         } catch (Exception ignored) {}

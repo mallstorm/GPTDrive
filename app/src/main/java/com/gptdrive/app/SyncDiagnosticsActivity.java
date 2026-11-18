@@ -75,7 +75,7 @@ public final class SyncDiagnosticsActivity extends Activity {
         addRow("OAuth", oauth == null ? "—" : "✓", oauth != null);
         addRow("Library Session", session == null ? "—" : (session.expired() ? "токен истёк" : "✓"), session != null && !session.expired());
         addRow("Состояние входа", AccountAuth.needsLogin(this, accountId)
-                ? "Нужен вход — вставьте новый Session JSON"
+                ? "Нужен вход — откройте аккаунт и войдите в ChatGPT"
                 : AccountAuth.connected(a) ? "Подключён" : "Не подключён", AccountAuth.connected(a));
         addRow("Backend Account ID", session == null || empty(session.accountId) ? "—" : session.accountId, session != null && !empty(session.accountId));
         addRow("Session email", session == null || empty(session.email) ? "—" : session.email, session != null);
