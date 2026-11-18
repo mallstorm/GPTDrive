@@ -74,7 +74,7 @@ public final class ImageViewerActivity extends Activity {
         super.onCreate(state);
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         if (!resolveInitialItem()) { finish(); return; }
         buildGallery(item);
         buildUi();

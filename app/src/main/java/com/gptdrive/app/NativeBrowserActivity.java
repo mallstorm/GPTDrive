@@ -75,7 +75,7 @@ public final class NativeBrowserActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         collections = new DriveCollections(db);
         category = normalizeCollection(getIntent().getStringExtra(EXTRA_CATEGORY));
         accountId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, db.activeAccountId());
@@ -572,7 +572,7 @@ public final class NativeBrowserActivity extends Activity {
 
     private void sync() {
         AccountProfile account = db.accountById(accountId);
-        if (account == null || !account.hasSession()) {
+        if (account == null || !AccountAuth.connected(account)) {
             Intent login = new Intent(this, ChatGptAuthActivity.class);
             login.putExtra(ChatGptAuthActivity.EXTRA_ACCOUNT_ID, accountId);
             login.putExtra(ChatGptAuthActivity.EXTRA_NEW_ACCOUNT, false);

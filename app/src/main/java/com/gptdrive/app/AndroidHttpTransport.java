@@ -72,7 +72,7 @@ final class AndroidHttpTransport implements HttpTransport {
     private static void sleepBackoff(int attempt, String retryAfter) {
         long ms = Math.min(8000L, 700L * (1L << Math.max(0, attempt)));
         if (retryAfter != null && !retryAfter.trim().isEmpty()) {
-            try { ms = Math.max(ms, Long.parseLong(retryAfter.trim()) * 1000L); }
+            try { ms = Math.max(ms, Math.min(30L, Long.parseLong(retryAfter.trim())) * 1000L); }
             catch (Exception ignored) {}
         }
         try { Thread.sleep(ms); }
@@ -86,11 +86,8 @@ final class AndroidHttpTransport implements HttpTransport {
             int total = 0;
             int n;
             while ((n = input.read(buf)) != -1) {
-                if (total + n > limit) {
-                    int allowed = Math.max(0, limit - total);
-                    if (allowed > 0) out.write(buf, 0, allowed);
-                    break;
-                }
+                if (total + n > limit)
+                    throw new java.io.IOException("Ответ сервера больше лимита " + (limit / 1024) + " КБ");
                 out.write(buf, 0, n);
                 total += n;
             }

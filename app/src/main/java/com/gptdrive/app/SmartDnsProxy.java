@@ -122,6 +122,10 @@ final class SmartDnsProxy {
                 return;
             }
             HostPort hp = parseTarget(parts[1]);
+            if (blockedTarget(hp.host, hp.port)) {
+                client.getOutputStream().write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                return;
+            }
 
             upstream = SmartDnsManager.connect(app, hp.host, hp.port);
 
@@ -177,6 +181,21 @@ final class SmartDnsProxy {
         int colon = s.lastIndexOf(':');
         if (colon > 0 && s.indexOf(':') == colon) return new HostPort(s.substring(0, colon), Integer.parseInt(s.substring(colon + 1)));
         return new HostPort(s, 443);
+    }
+
+    /** The proxy is for the public internet only: no loopback/LAN targets, only web ports. */
+    private static boolean blockedTarget(String host, int port) {
+        if (host == null || host.isEmpty()) return true;
+        if (port != 443 && port != 80 && port != 8443) return true;
+        String h = host.toLowerCase(java.util.Locale.ROOT);
+        if (h.equals("localhost") || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
+        boolean literal = h.indexOf(':') >= 0 || h.matches("[0-9.]+");
+        if (!literal) return false;
+        try {
+            java.net.InetAddress a = java.net.InetAddress.getByName(h);
+            return a.isLoopbackAddress() || a.isAnyLocalAddress() || a.isLinkLocalAddress()
+                    || a.isSiteLocalAddress() || a.isMulticastAddress();
+        } catch (Exception e) { return true; }
     }
 
     private static void close(Socket s) { if (s != null) try { s.close(); } catch (Exception ignored) {} }

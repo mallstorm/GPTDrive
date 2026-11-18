@@ -18,13 +18,13 @@ final class AccountSession {
             String chatgpt = cm.getCookie(CHATGPT);
             String auth = cm.getCookie(AUTH);
             String files = cm.getCookie(FILES);
-            new DriveDb(context.getApplicationContext()).saveCookies(accountId, chatgpt, auth, files);
+            DriveDb.get(context.getApplicationContext()).saveCookies(accountId, chatgpt, auth, files);
             cm.flush();
         } catch (Exception ignored) {}
     }
 
     static void switchTo(Context context, long accountId, Runnable ready) {
-        DriveDb db = new DriveDb(context.getApplicationContext());
+        DriveDb db = DriveDb.get(context.getApplicationContext());
         long current = db.activeAccountId();
         AccountProfile target = db.accountById(accountId);
         if (target == null) { runMain(ready); return; }
@@ -46,7 +46,7 @@ final class AccountSession {
     }
 
     static void startFresh(Context context, long accountId, Runnable ready) {
-        DriveDb db = new DriveDb(context.getApplicationContext());
+        DriveDb db = DriveDb.get(context.getApplicationContext());
         long current = db.activeAccountId();
         if (current != accountId) snapshot(context, current);
         CookieManager cm = CookieManager.getInstance();
@@ -60,17 +60,20 @@ final class AccountSession {
 
     static String cookieHeader(Context context, long accountId, String url) {
         try {
-            DriveDb db = new DriveDb(context.getApplicationContext());
+            DriveDb db = DriveDb.get(context.getApplicationContext());
             if (db.activeAccountId() == accountId) {
                 String live = CookieManager.getInstance().getCookie(url);
                 if (live != null && !live.trim().isEmpty()) return live;
             }
             AccountProfile a = db.accountById(accountId);
             if (a == null) return null;
-            String host = url == null ? "" : url.toLowerCase();
-            if (host.contains("chatgpt.com")) return emptyToNull(a.cookieChatgpt);
-            if (host.contains("auth.openai.com")) return emptyToNull(a.cookieAuth);
-            return emptyToNull(a.cookieFiles);
+            String host = "";
+            try { host = android.net.Uri.parse(url == null ? "" : url).getHost(); } catch (Exception ignored) {}
+            host = host == null ? "" : host.toLowerCase(java.util.Locale.ROOT);
+            if (host.equals("chatgpt.com") || host.endsWith(".chatgpt.com")) return emptyToNull(a.cookieChatgpt);
+            if (host.equals("auth.openai.com")) return emptyToNull(a.cookieAuth);
+            if (host.equals("files.oaiusercontent.com") || host.endsWith(".oaiusercontent.com")) return emptyToNull(a.cookieFiles);
+            return null;
         } catch (Exception e) { return null; }
     }
 

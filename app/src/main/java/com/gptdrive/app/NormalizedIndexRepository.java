@@ -18,6 +18,8 @@ import java.util.Set;
 final class NormalizedIndexRepository {
     private final DriveDb db;
     private final long accountId;
+    /** Row ids for the whole sync; loaded once instead of once per page. */
+    private Map<String, ExistingFile> rowCache;
 
     NormalizedIndexRepository(DriveDb db, long accountId) {
         this.db = db;
@@ -27,7 +29,8 @@ final class NormalizedIndexRepository {
     /** Adds or refreshes one received page without deleting rows from an unfinished sync. */
     void mergeFiles(SQLiteDatabase sql, List<ChatGptModels.RemoteFile> page) {
         if (page == null || page.isEmpty()) return;
-        Map<String, ExistingFile> existing = fileRows(sql);
+        if (rowCache == null) rowCache = fileRows(sql);
+        Map<String, ExistingFile> existing = rowCache;
         for (ChatGptModels.RemoteFile f : page) {
             if (f == null || blank(f.identity())) continue;
             String fileId = f.identity().trim();
@@ -100,57 +103,94 @@ final class NormalizedIndexRepository {
                 new String[]{Long.toString(accountId), "Library", "Images"});
     }
 
+    /**
+     * Upserts projects by (account_id, project_id) so project row ids, and therefore
+     * DocumentsProvider ids handed to other apps, survive every sync. Only projects that
+     * disappeared from a complete remote listing are removed.
+     */
     void replaceProjects(SQLiteDatabase sql, List<ChatGptModels.RemoteProject> projects) {
-        ArrayList<Long> oldRows = ids(sql, "projects", "account_id=?", new String[]{Long.toString(accountId)});
-        for (Long id : oldRows)
-            sql.delete("project_files", "project_row_id=?", new String[]{Long.toString(id)});
-        sql.delete("projects", "account_id=?", new String[]{Long.toString(accountId)});
+        Map<String, Long> existing = new HashMap<>();
+        Cursor c = sql.query("projects", new String[]{"id", "project_id"}, "account_id=?",
+                new String[]{Long.toString(accountId)}, null, null, null);
+        try { while (c.moveToNext()) existing.put(c.getString(1), c.getLong(0)); }
+        finally { c.close(); }
+
         sql.delete("items", "account_id=? AND category=?", new String[]{Long.toString(accountId), "Projects"});
-
-        if (projects == null) return;
-        for (ChatGptModels.RemoteProject p : projects) {
-            if (p == null || blank(p.id)) continue;
-            ContentValues pv = new ContentValues();
-            pv.put("account_id", accountId);
-            pv.put("project_id", p.id.trim());
-            pv.put("name", clean(p.name, "Project"));
-            pv.put("updated_at", System.currentTimeMillis());
-            long projectRow = sql.insert("projects", null, pv);
-            if (projectRow <= 0) continue;
-
-            for (ChatGptModels.RemoteFile f : p.files) {
-                if (f == null || blank(f.identity())) continue;
-                long fileRow = findFileRow(sql, f.identity());
-                if (fileRow <= 0) continue;
-                ContentValues link = new ContentValues();
-                link.put("project_row_id", projectRow);
-                link.put("file_row_id", fileRow);
-                sql.insertWithOnConflict("project_files", null, link, SQLiteDatabase.CONFLICT_IGNORE);
+        Set<String> seen = new HashSet<>();
+        if (projects != null) {
+            for (ChatGptModels.RemoteProject p : projects) {
+                if (p == null || blank(p.id)) continue;
+                String pid = p.id.trim();
+                seen.add(pid);
+                ContentValues pv = new ContentValues();
+                pv.put("name", clean(p.name, "Project"));
+                pv.put("updated_at", System.currentTimeMillis());
+                Long row = existing.get(pid);
+                long projectRow;
+                if (row != null) {
+                    sql.update("projects", pv, "id=?", new String[]{Long.toString(row)});
+                    sql.delete("project_files", "project_row_id=?", new String[]{Long.toString(row)});
+                    projectRow = row;
+                } else {
+                    pv.put("account_id", accountId);
+                    pv.put("project_id", pid);
+                    projectRow = sql.insert("projects", null, pv);
+                    if (projectRow <= 0) continue;
+                }
+                for (ChatGptModels.RemoteFile f : p.files) {
+                    if (f == null || blank(f.identity())) continue;
+                    long fileRow = findFileRow(sql, f.identity().trim());
+                    if (fileRow <= 0) continue;
+                    ContentValues link = new ContentValues();
+                    link.put("project_row_id", projectRow);
+                    link.put("file_row_id", fileRow);
+                    sql.insertWithOnConflict("project_files", null, link, SQLiteDatabase.CONFLICT_IGNORE);
+                }
+                insertLegacyLink(sql, "Projects", clean(p.name, "Project"),
+                        "https://chatgpt.com/g/" + pid);
             }
-
-            // Keep project roots visible in the current UI while the UI migrates to projects table.
-            insertLegacyLink(sql, "Projects", clean(p.name, "Project"),
-                    "https://chatgpt.com/g/" + p.id.trim());
+        }
+        for (Map.Entry<String, Long> e : existing.entrySet()) {
+            if (seen.contains(e.getKey())) continue;
+            sql.delete("project_files", "project_row_id=?", new String[]{Long.toString(e.getValue())});
+            sql.delete("projects", "id=?", new String[]{Long.toString(e.getValue())});
         }
     }
 
+    /** Upserts archived conversations; stale ones are removed only after a complete listing. */
     void replaceArchived(SQLiteDatabase sql, List<ChatGptModels.RemoteConversation> archived) {
-        sql.delete("conversations", "account_id=?", new String[]{Long.toString(accountId)});
+        Map<String, Long> existing = new HashMap<>();
+        Cursor c = sql.query("conversations", new String[]{"id", "conversation_id"}, "account_id=?",
+                new String[]{Long.toString(accountId)}, null, null, null);
+        try { while (c.moveToNext()) existing.put(c.getString(1), c.getLong(0)); }
+        finally { c.close(); }
+
         sql.delete("items", "account_id=? AND category=?", new String[]{Long.toString(accountId), "Archived"});
-        if (archived == null) return;
-
-        for (ChatGptModels.RemoteConversation c : archived) {
-            if (c == null || blank(c.id)) continue;
-            ContentValues v = new ContentValues();
-            v.put("account_id", accountId);
-            v.put("conversation_id", c.id.trim());
-            v.put("title", clean(c.title, "ChatGPT chat"));
-            v.put("archived", c.archived ? 1 : 0);
-            v.put("updated_at", Math.max(0, c.updatedAt));
-            sql.insertWithOnConflict("conversations", null, v, SQLiteDatabase.CONFLICT_REPLACE);
-
-            insertLegacyLink(sql, "Archived", clean(c.title, "ChatGPT chat"),
-                    "https://chatgpt.com/c/" + c.id.trim());
+        Set<String> seen = new HashSet<>();
+        if (archived != null) {
+            for (ChatGptModels.RemoteConversation x : archived) {
+                if (x == null || blank(x.id)) continue;
+                String cid = x.id.trim();
+                seen.add(cid);
+                ContentValues v = new ContentValues();
+                v.put("title", clean(x.title, "ChatGPT chat"));
+                v.put("archived", x.archived ? 1 : 0);
+                v.put("updated_at", Math.max(0, x.updatedAt));
+                Long row = existing.get(cid);
+                if (row != null) {
+                    sql.update("conversations", v, "id=?", new String[]{Long.toString(row)});
+                } else {
+                    v.put("account_id", accountId);
+                    v.put("conversation_id", cid);
+                    sql.insertWithOnConflict("conversations", null, v, SQLiteDatabase.CONFLICT_IGNORE);
+                }
+                insertLegacyLink(sql, "Archived", clean(x.title, "ChatGPT chat"),
+                        "https://chatgpt.com/c/" + cid);
+            }
+        }
+        for (Map.Entry<String, Long> e : existing.entrySet()) {
+            if (!seen.contains(e.getKey()))
+                sql.delete("conversations", "id=?", new String[]{Long.toString(e.getValue())});
         }
     }
 

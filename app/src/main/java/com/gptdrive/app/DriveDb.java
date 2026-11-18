@@ -14,7 +14,21 @@ final class DriveDb extends SQLiteOpenHelper {
     private static final String DB = "gpt_drive.db";
     private static final int VERSION = 5;
 
-    DriveDb(Context c) { super(c, DB, null, VERSION); }
+    private static volatile DriveDb shared;
+
+    /** One helper (and one connection pool) for the whole process. */
+    static DriveDb get(Context c) {
+        DriveDb d = shared;
+        if (d == null) {
+            synchronized (DriveDb.class) {
+                d = shared;
+                if (d == null) shared = d = new DriveDb(c.getApplicationContext());
+            }
+        }
+        return d;
+    }
+
+    DriveDb(Context c) { super(c, DB, null, VERSION); setWriteAheadLoggingEnabled(true); }
 
     @Override public void onCreate(SQLiteDatabase db) {
         createAccounts(db);

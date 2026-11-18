@@ -35,7 +35,7 @@ public final class ProjectBrowserActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         collections = new DriveCollections(db);
         accountId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, db.activeAccountId());
         buildUi();

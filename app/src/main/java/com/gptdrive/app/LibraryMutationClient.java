@@ -145,7 +145,7 @@ final class LibraryMutationClient {
         if (fid == null || fid.trim().isEmpty()) return "";
         fid = fid.trim();
 
-        DriveDb db = new DriveDb(app);
+        DriveDb db = DriveDb.get(app);
         Cursor c = db.getReadableDatabase().query("files", new String[]{"library_file_id"},
                 "account_id=? AND file_id=?", new String[]{Long.toString(accountId), fid}, null, null, null, "1");
         String local;
@@ -196,7 +196,7 @@ final class LibraryMutationClient {
 
     private void removeLocalAfterTrash(DriveItem item, String lib) {
         try {
-            DriveDb db = new DriveDb(app);
+            DriveDb db = DriveDb.get(app);
             SQLiteDatabase sql = db.getWritableDatabase();
             sql.beginTransaction();
             try {

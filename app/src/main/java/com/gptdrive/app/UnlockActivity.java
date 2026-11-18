@@ -14,8 +14,6 @@ import androidx.fragment.app.FragmentActivity;
 /** Secure unlock screen. A configured graphical pattern is always available as fallback. */
 public final class UnlockActivity extends FragmentActivity {
     private TextView status;
-    private int failures;
-    private long blockedUntil;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -59,7 +57,10 @@ public final class UnlockActivity extends FragmentActivity {
         }
         BiometricPrompt prompt = new BiometricPrompt(this, ContextCompat.getMainExecutor(this),
                 new BiometricPrompt.AuthenticationCallback() {
-                    @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult r) { success(); }
+                    @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult r) {
+                        AppLockManager.resetFailures(UnlockActivity.this);
+                        success();
+                    }
                     @Override public void onAuthenticationFailed() { status.setText("Отпечаток не распознан — попробуйте ещё раз или используйте ключ"); }
                     @Override public void onAuthenticationError(int code, CharSequence msg) {
                         if (!isFinishing()) status.setText("Используйте графический ключ");
@@ -73,21 +74,21 @@ public final class UnlockActivity extends FragmentActivity {
     }
 
     private void check(int[] p) {
-        if (System.currentTimeMillis() < blockedUntil) {
-            status.setText("Повторите позже");
+        long wait = AppLockManager.blockedUntil(this) - System.currentTimeMillis();
+        if (wait > 0) {
+            status.setText("Слишком много попыток · повторите через " + Math.max(1, wait / 1000) + " с");
             return;
         }
         if (p.length >= 4 && AppLockManager.verify(this, p)) {
+            AppLockManager.resetFailures(this);
             success();
             return;
         }
-        if (++failures >= 5) {
-            failures = 0;
-            blockedUntil = System.currentTimeMillis() + 30_000;
-            status.setText("Слишком много попыток · пауза 30 секунд");
-        } else {
-            status.setText("Неверный графический ключ");
-        }
+        AppLockManager.registerFailure(this);
+        long next = AppLockManager.blockedUntil(this) - System.currentTimeMillis();
+        status.setText(next > 0
+                ? "Слишком много попыток · пауза " + Math.max(1, next / 1000) + " с"
+                : "Неверный графический ключ");
     }
 
     private void success() {

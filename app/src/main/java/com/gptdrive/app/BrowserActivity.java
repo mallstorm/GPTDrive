@@ -56,7 +56,7 @@ public final class BrowserActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        db = new DriveDb(this);
+        db = DriveDb.get(this);
         accountId = getIntent().getLongExtra(EXTRA_ACCOUNT_ID, db.activeAccountId());
         root = new FrameLayout(this);
         root.setBackgroundColor(BG);

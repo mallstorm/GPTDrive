@@ -33,6 +33,20 @@ final class AppLockManager {
         if(backgroundAt>0 && (t==0 || SystemClock.elapsedRealtime()-backgroundAt>=t)) unlocked=false;
         backgroundAt=0;
     }
+    /** Persistent brute-force guard: delay doubles after every 5 wrong attempts (30 s … 1 h). */
+    static long blockedUntil(Context c){ return prefs(c).getLong("blocked_until", 0L); }
+    static void registerFailure(Context c){
+        SharedPreferences p=prefs(c);
+        int fails=p.getInt("fails",0)+1;
+        SharedPreferences.Editor e=p.edit().putInt("fails",fails);
+        if(fails%5==0){
+            int round=Math.min(7,fails/5-1);
+            long delay=Math.min(3_600_000L,30_000L<<round);
+            e.putLong("blocked_until",System.currentTimeMillis()+delay);
+        }
+        e.apply();
+    }
+    static void resetFailures(Context c){ prefs(c).edit().putInt("fails",0).putLong("blocked_until",0L).apply(); }
     static void setPattern(Context c,int[] pattern){
         byte[] salt=new byte[16]; new SecureRandom().nextBytes(salt);
         byte[] hash=derive(join(pattern).toCharArray(),salt);
