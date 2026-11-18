@@ -7,6 +7,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -71,4 +74,14 @@ jobs:
           name: GPTDrive-v0.12.8-chatgpt-smartdns-release
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
-
+      - name: Publish APK as a GitHub pre-release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          [ -f "$APK" ] || APK="app/build/outputs/apk/debug/app-debug.apk"
+          gh release create "build-${{ github.run_number }}" "$APK" --prerelease \
+            --title "GPT Drive build ${{ github.run_number }}" \
+            --notes "Commit ${{ github.sha }}"
