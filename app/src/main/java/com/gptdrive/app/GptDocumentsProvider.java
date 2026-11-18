@@ -19,6 +19,8 @@ public final class GptDocumentsProvider extends DocumentsProvider {
     private static final String ROOT = "gptdrive";
     private static final String[] CATS = {"Library", "Images", "Projects", "Archived", "Chat Mirror"};
     private static final int MAX_RESULTS = 10000;
+    private static final java.util.concurrent.ExecutorService POOL =
+            java.util.concurrent.Executors.newFixedThreadPool(4);
     private DriveDb db;
     private DocumentsIndex index;
 
@@ -140,7 +142,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
             if (entry == null || !entry.hasSnapshot) throw new FileNotFoundException(documentId);
             try {
                 ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
-                new Thread(() -> streamMirror(mirror, ref.conversationId, pipe[1]), "gptdrive-chat-mirror").start();
+                POOL.execute(() -> streamMirror(mirror, ref.conversationId, pipe[1]));
                 return pipe[0];
             } catch (Exception e) {
                 throw new FileNotFoundException(e.getMessage());
@@ -152,7 +154,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
             if (conversation == null) throw new FileNotFoundException(documentId);
             try {
                 ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
-                new Thread(() -> streamConversation(conversation, pipe[1]), "gptdrive-conversation-link").start();
+                POOL.execute(() -> streamConversation(conversation, pipe[1]));
                 return pipe[0];
             } catch (Exception e) {
                 throw new FileNotFoundException(e.getMessage());
@@ -162,7 +164,7 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         DriveItem item = resolveFile(documentId);
         try {
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
-            new Thread(() -> stream(item, pipe[1]), "gptdrive-stream").start();
+            POOL.execute(() -> stream(item, pipe[1], signal));
             return pipe[0];
         } catch (Exception e) {
             throw new FileNotFoundException(e.getMessage());
@@ -175,10 +177,24 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         if (!DriveActions.isImage(item)) throw new FileNotFoundException(documentId);
         try {
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
-            new Thread(() -> stream(item, pipe[1]), "gptdrive-thumb").start();
+            POOL.execute(() -> streamThumbnail(item, pipe[1], signal));
             return new AssetFileDescriptor(pipe[0], 0, AssetFileDescriptor.UNKNOWN_LENGTH);
         } catch (Exception e) {
             throw new FileNotFoundException(e.getMessage());
+        }
+    }
+
+    /** Thumbnails come from the persistent 512 px index; the original is downloaded only on a cache miss. */
+    private void streamThumbnail(DriveItem item, ParcelFileDescriptor writeSide, CancellationSignal signal) {
+        try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(writeSide)) {
+            if (signal != null && signal.isCanceled()) return;
+            android.graphics.Bitmap b = ThumbnailDiskCache.get(getContext(), item.accountId,
+                    RemoteFileSource.stableUrl(item.url), 512);
+            if (b == null) return;
+            b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out);
+        } catch (Exception e) {
+            SyncLog.e(getContext(), "saf", "thumbnail failed for file " + item.id, e);
+            try { writeSide.close(); } catch (Exception ignored2) {}
         }
     }
 
@@ -199,14 +215,18 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         return item;
     }
 
-    private void stream(DriveItem item, ParcelFileDescriptor writeSide) {
+    private void stream(DriveItem item, ParcelFileDescriptor writeSide, CancellationSignal signal) {
         try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(writeSide);
              RemoteFileSource.Connection c = RemoteFileSource.open(getContext(), item.accountId, item.url);
              java.io.InputStream in = c.inputStream()) {
             byte[] b = new byte[32768];
             int n;
-            while ((n = in.read(b)) != -1) out.write(b, 0, n);
-        } catch (Exception ignored) {
+            while ((n = in.read(b)) != -1) {
+                if (signal != null && signal.isCanceled()) break;
+                out.write(b, 0, n);
+            }
+        } catch (Exception e) {
+            SyncLog.e(getContext(), "saf", "stream failed for file " + item.id, e);
             try { writeSide.close(); } catch (Exception ignored2) {}
         }
     }

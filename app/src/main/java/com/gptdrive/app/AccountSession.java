@@ -67,10 +67,13 @@ final class AccountSession {
             }
             AccountProfile a = db.accountById(accountId);
             if (a == null) return null;
-            String host = url == null ? "" : url.toLowerCase();
-            if (host.contains("chatgpt.com")) return emptyToNull(a.cookieChatgpt);
-            if (host.contains("auth.openai.com")) return emptyToNull(a.cookieAuth);
-            return emptyToNull(a.cookieFiles);
+            String host = "";
+            try { host = android.net.Uri.parse(url == null ? "" : url).getHost(); } catch (Exception ignored) {}
+            host = host == null ? "" : host.toLowerCase(java.util.Locale.ROOT);
+            if (host.equals("chatgpt.com") || host.endsWith(".chatgpt.com")) return emptyToNull(a.cookieChatgpt);
+            if (host.equals("auth.openai.com")) return emptyToNull(a.cookieAuth);
+            if (host.equals("files.oaiusercontent.com") || host.endsWith(".oaiusercontent.com")) return emptyToNull(a.cookieFiles);
+            return null;
         } catch (Exception e) { return null; }
     }
 

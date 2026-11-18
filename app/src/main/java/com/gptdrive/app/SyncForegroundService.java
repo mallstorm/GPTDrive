@@ -65,6 +65,7 @@ public final class SyncForegroundService extends Service {
             SyncRuntimeState.auth(this, accountId,
                     e.getMessage() == null ? "Сессия ChatGPT недействительна" : e.getMessage());
         } catch (Exception e) {
+            SyncLog.e(this, "sync", "account " + accountId + " failed", e);
             String m = e.getMessage();
             SyncRuntimeState.error(this, accountId,
                     m == null || m.trim().isEmpty() ? e.getClass().getSimpleName() : m.trim());

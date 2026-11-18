@@ -59,6 +59,7 @@ public final class LibraryWatcherWorker extends Worker {
                     // Retrying cannot repair it: flag the account and notify once.
                     AccountAuth.markNeedsLogin(app, account.id, e.getMessage());
                 } catch (Exception e) {
+                    SyncLog.e(app, "watcher", "poll failed for account " + account.id, e);
                     transientFailure = true;
                 }
             }

@@ -73,7 +73,10 @@ public final class SyncDiagnosticsActivity extends Activity {
         addRow("Профиль", a == null ? "—" : a.displayName(), true);
         addRow("Локальный ID", Long.toString(accountId), false);
         addRow("OAuth", oauth == null ? "—" : "✓", oauth != null);
-        addRow("Library Session", session == null ? "—" : "✓", session != null);
+        addRow("Library Session", session == null ? "—" : (session.expired() ? "токен истёк" : "✓"), session != null && !session.expired());
+        addRow("Состояние входа", AccountAuth.needsLogin(this, accountId)
+                ? "Нужен вход — вставьте новый Session JSON"
+                : AccountAuth.connected(a) ? "Подключён" : "Не подключён", AccountAuth.connected(a));
         addRow("Backend Account ID", session == null || empty(session.accountId) ? "—" : session.accountId, session != null && !empty(session.accountId));
         addRow("Session email", session == null || empty(session.email) ? "—" : session.email, session != null);
 
@@ -104,6 +107,10 @@ public final class SyncDiagnosticsActivity extends Activity {
                 addRow(s.surface, value, s.ok());
             }
         }
+
+        addSection("Журнал событий");
+        String log = SyncLog.dump(this);
+        addRow("Последние события", log.isEmpty() ? "Пока пусто" : log, log.isEmpty());
 
         addSection("Routing & DNS");
         SmartDnsManager.initialize(this);

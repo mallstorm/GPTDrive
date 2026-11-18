@@ -53,6 +53,7 @@ final class AccountAuth {
         SharedPreferences p = prefs(c);
         if (p.getBoolean("needs_" + accountId, false)) return;
         p.edit().putBoolean("needs_" + accountId, true).apply();
+        SyncLog.i(c, "auth", "account " + accountId + " needs login: " + reason);
         try {
             if (Build.VERSION.SDK_INT >= 33 &&
                     c.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
