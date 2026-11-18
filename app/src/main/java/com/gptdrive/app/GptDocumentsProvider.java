@@ -184,12 +184,12 @@ public final class GptDocumentsProvider extends DocumentsProvider {
         }
     }
 
-    /** Thumbnails come from the persistent 512 px index; the original is downloaded only on a cache miss. */
+    /** Thumbnails come from the persistent 300 px index; the original is downloaded only on a cache miss. */
     private void streamThumbnail(DriveItem item, ParcelFileDescriptor writeSide, CancellationSignal signal) {
         try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(writeSide)) {
             if (signal != null && signal.isCanceled()) return;
             android.graphics.Bitmap b = ThumbnailDiskCache.get(getContext(), item.accountId,
-                    RemoteFileSource.stableUrl(item.url), 512);
+                    RemoteFileSource.stableUrl(item.url), 300);
             if (b == null) return;
             b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out);
         } catch (Exception e) {

@@ -73,7 +73,7 @@ final class ThumbnailDiskCache {
                 }
 
                 File original = ImageDiskCache.get(app, accountId, stableSource);
-                Bitmap source = decodeSampled(original, Math.max(maxDimension, 256));
+                Bitmap source = decodeSampled(original, Math.max(maxDimension, 300));
                 if (source == null) throw new java.io.IOException("Не удалось декодировать превью");
                 Bitmap thumb = fit(source, maxDimension);
                 if (thumb != source) source.recycle();
@@ -81,7 +81,7 @@ final class ThumbnailDiskCache {
                 File tmp = new File(dir, digest + ".part");
                 if (tmp.exists()) tmp.delete();
                 try (FileOutputStream out = new FileOutputStream(tmp)) {
-                    if (!thumb.compress(Bitmap.CompressFormat.JPEG, 86, out))
+                    if (!thumb.compress(Bitmap.CompressFormat.JPEG, 82, out))
                         throw new java.io.IOException("Не удалось сохранить превью");
                     out.getFD().sync();
                 }
@@ -92,6 +92,8 @@ final class ThumbnailDiskCache {
                 }
                 touch(dst);
                 lowStorageGuard(dir, dst);
+                // The original was only needed to build the preview; do not keep megabytes per file.
+                ImageDiskCache.invalidate(app, accountId, stableSource);
                 return thumb;
             }
         } finally {

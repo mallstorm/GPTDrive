@@ -51,6 +51,7 @@ final class ChatGptSyncCoordinator {
     Result sync(ChatGptProvider.Progress progress) throws Exception {
         ChatGptModels.LibrarySnapshot library;
         final int[] originalPreviewBudget = {0};
+        final boolean[] shapeLogged = {false};
         try {
             library = provider.loadLibrary(250, progress, (pages, pageFiles, objects) -> {
                 SQLiteDatabase pageDb = db.getWritableDatabase();
@@ -62,6 +63,12 @@ final class ChatGptSyncCoordinator {
                     pageDb.endTransaction();
                 }
                 IndexChangeNotifier.notify(context, accountId);
+                if (!shapeLogged[0]) {
+                    shapeLogged[0] = true;
+                    SyncLog.i(context, "schema", "Library: " + SchemaProbe.library);
+                    if (!SchemaProbe.images.isEmpty())
+                        SyncLog.i(context, "schema", "Images: " + SchemaProbe.images);
+                }
                 for (ChatGptModels.RemoteFile f : pageFiles) {
                     if (f == null || !f.isImage()) continue;
                     String identity = f.stableUrl();
