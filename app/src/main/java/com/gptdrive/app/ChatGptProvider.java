@@ -331,7 +331,7 @@ final class ChatGptProvider {
             h.put("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8");
             String cookie = AccountSession.cookieHeader(context, accountId, BASE);
             if (cookie != null && !cookie.trim().isEmpty()) h.put("Cookie", cookie);
-            transport.execute(new HttpRequest("GET", BASE + "/", h, null, true, false, 12000, 18000, 256 * 1024));
+            transport.execute(new HttpRequest("GET", BASE + "/", h, null, true, false, 12000, 18000, 2 * 1024 * 1024));
         } catch (Exception ignored) {}
         bootstrapped = true;
     }
