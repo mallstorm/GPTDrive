@@ -39,7 +39,8 @@ final class ChatGptResponseParser {
         f.assetPointer = clean(o.optString("asset_pointer", ""));
         f.rawUrl = raw;
         f.thumbnailUrl = firstStringDeep(o, "thumbnail_url", "thumbnailUrl", "preview_url",
-                "previewUrl", "small_url", "smallUrl");
+                "previewUrl", "small_url", "smallUrl", "thumb_url", "thumbUrl", "thumbnail_link",
+                "preview_image_url", "previewImageUrl", "thumbnail");
         f.width = o.optInt("width", 0);
         f.height = o.optInt("height", 0);
         f.createdAt = parseTime(o.opt("created_at"));
@@ -78,7 +79,8 @@ final class ChatGptResponseParser {
         f.assetPointer = firstStringDeep(o, "asset_pointer", "assetPointer");
         f.rawUrl = rawUrl;
         f.thumbnailUrl = firstStringDeep(o, "thumbnail_url", "thumbnailUrl", "preview_url",
-                "previewUrl", "small_url", "smallUrl");
+                "previewUrl", "small_url", "smallUrl", "thumb_url", "thumbUrl", "thumbnail_link",
+                "preview_image_url", "previewImageUrl", "thumbnail");
         f.width = (int) Math.min(Integer.MAX_VALUE, firstLongDeep(o, "width", "image_width", "imageWidth"));
         f.height = (int) Math.min(Integer.MAX_VALUE, firstLongDeep(o, "height", "image_height", "imageHeight"));
         f.createdAt = firstTimeDeep(o, "created_at", "create_time", "createdAt", "uploaded_at", "uploadedAt");

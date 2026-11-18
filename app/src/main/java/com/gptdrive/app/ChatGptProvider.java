@@ -97,6 +97,7 @@ final class ChatGptProvider {
             throw new AuthException("ChatGPT backend-сессия не подтверждена (WARNING_BANNER). Обнови вход ChatGPT");
         }
 
+        try { SchemaProbe.captureLibrary(root); } catch (Exception ignored) {}
         ChatGptModels.LibraryPage page = ChatGptResponseParser.decodeLibraryPage(body);
         if (page != null && page.files != null && !page.files.isEmpty()) return r;
         if (hasLibraryEnvelope(root)) return r;
@@ -134,6 +135,7 @@ final class ChatGptProvider {
             JSONObject root = new JSONObject(r.bodyUtf8());
             JSONArray items = root.optJSONArray("items");
             if (items == null || items.length() == 0) break;
+            try { SchemaProbe.captureImage(items.optJSONObject(0)); } catch (Exception ignored) {}
             for (int i = 0; i < items.length(); i++) {
                 ChatGptModels.RemoteFile f = ChatGptResponseParser.imageToRemote(items.optJSONObject(i));
                 if (f != null) ChatGptModels.merge(out, f);

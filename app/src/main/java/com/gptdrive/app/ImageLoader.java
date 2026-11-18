@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit;
 final class ImageLoader {
     interface Callback { void onLoaded(Bitmap bitmap); }
 
-    private static final int THUMB_MAX = 512;
+    private static final int THUMB_MAX = 300;
     private static final int VIEWER_MAX = 2560;
     /** Visible cells: newest request first, so fast scrolling never waits behind stale rows. */
     private static final ExecutorService THUMB_EXEC =
