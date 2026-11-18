@@ -29,7 +29,8 @@ final class ChatGptProvider {
     private final Context context;
     private final long accountId;
     private final HttpTransport transport;
-    private boolean bootstrapped;
+    private static final java.util.concurrent.ConcurrentHashMap<Long, Long> BOOTSTRAPPED =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private volatile int lastLibraryStrategy = -1;
 
     ChatGptProvider(Context context, long accountId) throws AuthException {
@@ -315,15 +316,18 @@ final class ChatGptProvider {
                 followRedirects, retryable, 15000, 30000, 32 * 1024 * 1024);
         HttpResponse response = transport.execute(req);
         if (response.code == 403 && "challenge".equalsIgnoreCase(response.header("cf-mitigated"))) {
-            bootstrapped = false;
+            BOOTSTRAPPED.remove(accountId);
             bootstrap();
             response = transport.execute(req);
         }
         return response;
     }
 
+    /** Warm-up GET of the home page, at most once per account per 20 minutes for the whole process. */
     private void bootstrap() {
-        if (bootstrapped) return;
+        Long last = BOOTSTRAPPED.get(accountId);
+        if (last != null && System.currentTimeMillis() - last < 20L * 60L * 1000L) return;
+        BOOTSTRAPPED.put(accountId, System.currentTimeMillis());
         try {
             Map<String, String> h = new LinkedHashMap<>();
             h.put("User-Agent", AppIdentity.userAgent());
@@ -333,7 +337,6 @@ final class ChatGptProvider {
             if (cookie != null && !cookie.trim().isEmpty()) h.put("Cookie", cookie);
             transport.execute(new HttpRequest("GET", BASE + "/", h, null, true, false, 12000, 18000, 2 * 1024 * 1024));
         } catch (Exception ignored) {}
-        bootstrapped = true;
     }
 
     private ChatGptSessionStore.Session requireSession() throws AuthException {

@@ -7,11 +7,16 @@ import android.util.LruCache;
 import android.widget.ImageView;
 
 import java.io.File;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.lang.ref.WeakReference;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /** Stable preview loader backed by the persistent Thumbnail Index. */
 final class ImageLoader {
@@ -19,7 +24,23 @@ final class ImageLoader {
 
     private static final int THUMB_MAX = 512;
     private static final int VIEWER_MAX = 2560;
-    private static final ExecutorService THUMB_EXEC = Executors.newFixedThreadPool(2);
+    /** Visible cells: newest request first, so fast scrolling never waits behind stale rows. */
+    private static final ExecutorService THUMB_EXEC =
+            new ThreadPoolExecutor(4, 4, 30L, TimeUnit.SECONDS, new LifoQueue());
+    /** Background warm-up (sync/watcher); never blocks visible cells. */
+    private static final ExecutorService BULK_EXEC = Executors.newFixedThreadPool(2);
+    private static final java.util.concurrent.ConcurrentHashMap<String, List<WeakReference<ImageView>>> PENDING =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<String, Long> FAILED =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long RETRY_AFTER_MS = 45_000L;
+    private static volatile long lastErrorLog;
+
+    private static final class LifoQueue extends LinkedBlockingDeque<Runnable> {
+        @Override public boolean offer(Runnable r) { return offerFirst(r); }
+        @Override public boolean add(Runnable r) { addFirst(r); return true; }
+        @Override public void put(Runnable r) throws InterruptedException { putFirst(r); }
+    }
     private static final ExecutorService VIEWER_EXEC = Executors.newFixedThreadPool(2);
     private static final Set<String> PREFETCHING = ConcurrentHashMap.newKeySet();
     private static final LruCache<String, Bitmap> CACHE = new LruCache<String, Bitmap>(48 * 1024) {
@@ -48,18 +69,52 @@ final class ImageLoader {
             view.setImageBitmap(cached);
             return;
         }
+        Long failedAt = FAILED.get(cacheKey);
+        if (failedAt != null && System.currentTimeMillis() - failedAt < RETRY_AFTER_MS) return;
+
+        // One download per preview no matter how many cells/refreshes ask for it.
+        List<WeakReference<ImageView>> waiters = PENDING.get(cacheKey);
+        if (waiters != null) {
+            waiters.add(new WeakReference<>(view));
+            return;
+        }
+        waiters = new CopyOnWriteArrayList<>();
+        waiters.add(new WeakReference<>(view));
+        PENDING.put(cacheKey, waiters);
+
         Context context = view.getContext().getApplicationContext();
         THUMB_EXEC.execute(() -> {
-            Bitmap b = fetchThumb(context, accountId, stable);
-            if (b != null) CACHE.put(cacheKey, b);
-            view.post(() -> {
-                Object tag = view.getTag();
-                if (b != null && !b.isRecycled() && stable.equals(tag)) {
-                    view.clearColorFilter();
-                    view.setImageBitmap(b);
-                }
-            });
+            if (!stillWanted(cacheKey, stable)) { PENDING.remove(cacheKey); return; }
+            Bitmap b = null;
+            try { b = fetchThumb(context, accountId, stable); }
+            catch (Throwable t) { b = null; }
+            final Bitmap result = b;
+            if (result != null) { CACHE.put(cacheKey, result); FAILED.remove(cacheKey); }
+            else FAILED.put(cacheKey, System.currentTimeMillis());
+            List<WeakReference<ImageView>> done = PENDING.remove(cacheKey);
+            if (done == null || result == null) return;
+            for (WeakReference<ImageView> ref : done) {
+                ImageView v = ref.get();
+                if (v == null) continue;
+                v.post(() -> {
+                    if (!result.isRecycled() && stable.equals(v.getTag())) {
+                        v.clearColorFilter();
+                        v.setImageBitmap(result);
+                    }
+                });
+            }
         });
+    }
+
+    /** False when every cell that asked for this preview has since been rebound to another file. */
+    private static boolean stillWanted(String cacheKey, String stable) {
+        List<WeakReference<ImageView>> w = PENDING.get(cacheKey);
+        if (w == null) return false;
+        for (WeakReference<ImageView> ref : w) {
+            ImageView v = ref.get();
+            if (v != null && stable.equals(v.getTag())) return true;
+        }
+        return false;
     }
 
     static void prefetchThumb(Context context, long accountId, String url) {
@@ -79,7 +134,7 @@ final class ImageLoader {
             return;
         }
         if (!PREFETCHING.add(key)) return;
-        THUMB_EXEC.execute(() -> {
+        BULK_EXEC.execute(() -> {
             try {
                 Bitmap b = fetchThumb(app, accountId, stable, source);
                 if (b != null) {
@@ -143,7 +198,12 @@ final class ImageLoader {
             try {
                 ImageDiskCache.invalidate(context, accountId, sourceUrl);
                 return ThumbnailDiskCache.get(context, accountId, sourceUrl, identityUrl, THUMB_MAX);
-            } catch (Exception ignored) {
+            } catch (Exception second) {
+                long now = System.currentTimeMillis();
+                if (now - lastErrorLog > 5_000L) {
+                    lastErrorLog = now;
+                    SyncLog.e(context, "thumb", "preview failed (" + identityUrl + ")", second);
+                }
                 return null;
             }
         }
